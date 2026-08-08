@@ -1,0 +1,29 @@
+# Только база. Само приложение гоняем локально через `yarn start:dev` —
+# ему нужен интерактивный TTY на этапе создания сессии и вообще это
+# ручной инструмент, а не сервис.
+#
+#   docker compose up -d      # поднять
+#   docker compose down       # остановить (данные остаются в volume)
+#   docker compose down -v    # снести вместе с данными
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ttlg-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: teach_track_leadgen
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    # 5434 снаружи: 5432 занят tt-db (TeachTrack), 5433 — triptrack-db.
+    ports:
+      - '127.0.0.1:5434:5432'
+    volumes:
+      - ttlg-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  ttlg-pgdata:
