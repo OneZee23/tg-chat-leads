@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LeadEntity, LeadStatus } from '@modules/lead/lead.entity';
 import { ListLeadsQueryDto } from '@modules/lead/dto/list-leads.query.dto';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
 export interface UpsertLeadInput {
   tgUserId: string;
@@ -164,9 +164,11 @@ export class LeadService {
    * Помечает как `contacted` тех, кому уже писали (список приходит из
    * разбора личных диалогов аккаунта).
    *
-   * Трогаем только `new`: если ты руками поставил `replied`, `registered`
-   * или `skip`, автоматика не имеет права это переписать — она знает
-   * меньше тебя.
+   * Трогаем `new` и `sending`: руками проставленные `replied`, `registered`
+   * или `skip` автоматика переписывать не имеет права — она знает меньше
+   * тебя. А вот `sending` — это как раз оборвавшаяся рассылка, и здесь
+   * наличие переписки в личке лучшее (и единственное) доказательство того,
+   * что человеку успело уйти.
    *
    * `= ANY($1::bigint[])` вместо `IN (...)`: список может быть в сотни
    * элементов, а так это один параметр и один план запроса.
@@ -187,7 +189,7 @@ export class LeadService {
           note         = COALESCE(note, 'автоопределено: в личке уже есть моё сообщение'),
           updated_at   = now()
       WHERE tg_user_id = ANY($1::bigint[])
-        AND status = 'new'
+        AND status IN ('new', 'sending')
       `,
       [tgUserIds],
     );
@@ -255,8 +257,8 @@ export class LeadService {
     const [, affected]: [unknown[], number] = await this.repo.query(
       `
       UPDATE tg_lead
-      SET status       = $2,
-          contacted_at = CASE WHEN $2 = 'contacted'
+      SET status       = $2::text,
+          contacted_at = CASE WHEN $2::text = 'contacted'
                               THEN COALESCE(contacted_at, now()) ELSE contacted_at END,
           updated_at   = now()
       WHERE lower(username) = ANY($1::text[])
@@ -299,7 +301,13 @@ export class LeadService {
         [ids],
       );
 
-      return em.getRepository(LeadEntity).findByIds(ids);
+      // Порядок обязан совпадать с порядком выборки. find() его не
+      // гарантирует, а он тут не косметика: если рассылка упадёт на
+      // середине, только по порядку можно понять, кому уже ушло.
+      const loaded = await em.getRepository(LeadEntity).find({ where: { id: In(ids) } });
+      const byId = new Map(loaded.map((lead) => [lead.id, lead]));
+
+      return ids.map((id) => byId.get(id)).filter((lead): lead is LeadEntity => !!lead);
     });
   }
 
@@ -311,8 +319,8 @@ export class LeadService {
     await this.repo.query(
       `
       UPDATE tg_lead
-      SET status       = $2,
-          contacted_at = CASE WHEN $2 = 'contacted'
+      SET status       = $2::text,
+          contacted_at = CASE WHEN $2::text = 'contacted'
                               THEN COALESCE(contacted_at, now()) ELSE contacted_at END,
           note         = $3,
           updated_at   = now()

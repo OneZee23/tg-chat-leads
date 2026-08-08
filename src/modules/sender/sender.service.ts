@@ -84,22 +84,28 @@ export class SenderService {
           continue;
         }
 
+        // Отправка и отметка разделены намеренно. Если их держать в одном
+        // try, падение отметки уводит уже отправленное сообщение в ветку
+        // «ошибка отправки» — человек письмо получил, а в базе висит
+        // failed, и при следующем запуске получит второе.
+        let sendError: unknown = null;
         try {
           await this.sendTo(lead, content);
-          await this.leads.finishSending(lead.id, 'contacted', 'отправлено рассылкой');
+        } catch (err) {
+          sendError = err;
+        }
+
+        if (sendError === null) {
+          await this.safeFinish(lead, 'contacted', 'отправлено рассылкой');
           report.sent += 1;
           report.entries.push({ username: lead.username, result: 'sent' });
           consecutiveErrors = 0;
           this.logger.log(
             `Отправлено @${lead.username} (${report.sent}/${targets.length})`,
           );
-        } catch (err) {
-          const message = describeError(err);
-          await this.leads.finishSending(
-            lead.id,
-            'failed',
-            `ошибка отправки: ${message}`,
-          );
+        } else {
+          const message = describeError(sendError);
+          await this.safeFinish(lead, 'failed', `ошибка отправки: ${message}`);
           report.failed += 1;
           report.entries.push({
             username: lead.username,
@@ -109,7 +115,7 @@ export class SenderService {
           consecutiveErrors += 1;
           this.logger.warn(`Не отправлено @${lead.username}: ${message}`);
 
-          if (isFatal(err)) {
+          if (isFatal(sendError)) {
             report.stoppedBecause = `аккаунт ограничен: ${message}`;
             await this.releaseRest(targets, index + 1);
             break;
@@ -134,6 +140,26 @@ export class SenderService {
     }
 
     return report;
+  }
+
+  /**
+   * Отметка не имеет права уронить рассылку: сообщения уже ушли, и падение
+   * на записи в базу оставит их неучтёнными. Проблему кричим в лог.
+   */
+  private async safeFinish(
+    lead: LeadEntity,
+    outcome: 'contacted' | 'failed',
+    note: string,
+  ): Promise<void> {
+    try {
+      await this.leads.finishSending(lead.id, outcome, note);
+    } catch (err) {
+      this.logger.error(
+        `НЕ УДАЛОСЬ ОТМЕТИТЬ @${lead.username} как ${outcome}: ${describeError(err)}. ` +
+          'Отметь вручную: yarn wrote @' +
+          lead.username,
+      );
+    }
   }
 
   private async sendTo(lead: LeadEntity, content: MessageContent): Promise<void> {
