@@ -160,6 +160,37 @@ export class LeadService {
     return `﻿${[header.join(','), ...lines].join('\r\n')}\r\n`;
   }
 
+  /**
+   * Помечает как `contacted` тех, кому уже писали (список приходит из
+   * разбора личных диалогов аккаунта).
+   *
+   * Трогаем только `new`: если ты руками поставил `replied`, `registered`
+   * или `skip`, автоматика не имеет права это переписать — она знает
+   * меньше тебя.
+   *
+   * `= ANY($1::bigint[])` вместо `IN (...)`: список может быть в сотни
+   * элементов, а так это один параметр и один план запроса.
+   */
+  public async markContacted(tgUserIds: string[]): Promise<number> {
+    if (tgUserIds.length === 0) return 0;
+
+    const rows: unknown[] = await this.repo.query(
+      `
+      UPDATE tg_lead
+      SET status       = 'contacted',
+          contacted_at = COALESCE(contacted_at, now()),
+          note         = COALESCE(note, 'автоопределено: в личке уже есть моё сообщение'),
+          updated_at   = now()
+      WHERE tg_user_id = ANY($1::bigint[])
+        AND status = 'new'
+      RETURNING id
+      `,
+      [tgUserIds],
+    );
+
+    return rows.length;
+  }
+
   public async updateStatus(
     id: string,
     status: LeadStatus,
