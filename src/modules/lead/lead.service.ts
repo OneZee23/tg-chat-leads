@@ -346,12 +346,81 @@ export class LeadService {
     return affected ?? 0;
   }
 
-  /** Вернуть застрявших в `sending` обратно в очередь (после падения). */
-  public async releaseStuckSending(): Promise<number> {
+  /**
+   * Вернуть застрявших в `sending` обратно в очередь после падения.
+   *
+   * Слепо возвращать всех нельзя, и это главная опасность этой ручки.
+   * Лид законно оказывается в `sending` с уже УШЕДШИМ сообщением: в
+   * SenderService.deliver попытка закрывается как `sent` раньше, чем
+   * проставляется статус лида, а сбой второй записи проглатывается
+   * (safeFinishLead только логирует). Такой человек уже получил письмо —
+   * вернуть его в очередь значит отправить второе.
+   *
+   * Поэтому решение принимает журнал: возвращаем только тех, у кого НЕТ
+   * попытки со следом отправки. Остальных отдаём списком, чтобы человек
+   * разобрал их руками — глядя в диалог, а не в статус.
+   */
+  public async releaseStuckSending(): Promise<{
+    released: number;
+    keptForReview: Array<{
+      username: string | null;
+      tgUserId: string;
+      lastResult: string;
+    }>;
+  }> {
+    const risky: Array<{ username: string | null; tg_user_id: string; result: string }> =
+      await this.repo.query(
+        `
+        SELECT l.username, l.tg_user_id, a.result
+        FROM tg_lead l
+        JOIN LATERAL (
+          SELECT result FROM tg_send_attempt
+          WHERE lead_id = l.id
+          ORDER BY started_at DESC
+          LIMIT 1
+        ) a ON true
+        WHERE l.status = 'sending'
+          AND a.result IN ('sent', 'started')
+        `,
+      );
+
     const [, affected]: [unknown[], number] = await this.repo.query(
-      `UPDATE tg_lead SET status = 'new', updated_at = now() WHERE status = 'sending'`,
+      `
+      UPDATE tg_lead SET status = 'new', updated_at = now()
+      WHERE status = 'sending'
+        AND NOT EXISTS (
+          SELECT 1 FROM tg_send_attempt a
+          WHERE a.lead_id = tg_lead.id
+            AND a.result IN ('sent', 'started')
+            AND a.started_at > now() - interval '7 days'
+        )
+      `,
     );
-    return affected ?? 0;
+
+    return {
+      released: affected ?? 0,
+      keptForReview: risky.map((row) => ({
+        username: row.username,
+        tgUserId: String(row.tg_user_id),
+        lastResult: row.result,
+      })),
+    };
+  }
+
+  /**
+   * Всё ещё ли лид занят нашей рассылкой.
+   *
+   * Между тем как пачка занята и тем как до конкретного человека дойдёт
+   * очередь, проходят минуты. За это время сверка с личкой (она трогает и
+   * `sending`) могла перевести его в `contacted` — значит письмо уже есть,
+   * и отправлять второе нельзя.
+   */
+  public async isStillClaimed(id: string): Promise<boolean> {
+    const rows: Array<{ status: string }> = await this.repo.query(
+      `SELECT status FROM tg_lead WHERE id = $1`,
+      [id],
+    );
+    return rows[0]?.status === 'sending';
   }
 
   /**
@@ -400,15 +469,23 @@ export class LeadService {
     return affected ?? 0;
   }
 
-  /** Сводка по аутричу: написано / ответили. */
+  /**
+   * Сводка по аутричу: написано / ответили.
+   *
+   * Знаменатель считаем по `contacted_at`, а не по набору статусов: человек,
+   * которому написали и которого потом пометили `skip`, из статусов выпадает,
+   * и конверсия задирается вверх. Факт отправки не отменяется тем, что мы
+   * потом передумали с ним работать.
+   */
   public async outreachSummary(): Promise<{ contacted: number; replied: number }> {
     const rows: Array<{ contacted: string; replied: string }> = await this.repo.query(
       `
       SELECT
-        count(*) FILTER (WHERE status IN ('contacted', 'replied', 'registered', 'rejected'))::text
-          AS contacted,
-        count(*) FILTER (WHERE status IN ('replied', 'registered', 'rejected'))::text
-          AS replied
+        count(*) FILTER (WHERE contacted_at IS NOT NULL)::text AS contacted,
+        count(*) FILTER (
+          WHERE contacted_at IS NOT NULL
+            AND status IN ('replied', 'registered', 'rejected')
+        )::text AS replied
       FROM tg_lead
       `,
     );

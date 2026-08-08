@@ -74,11 +74,15 @@ export class SenderController {
 
   /**
    * Вернуть в очередь тех, кто застрял в `sending` после аварийной
-   * остановки процесса. Сверься сначала с unfinishedAttempts из /send/status.
+   * остановки процесса.
+   *
+   * Возвращаются только те, у кого в журнале нет следа отправки.
+   * Остальные приходят в `keptForReview` — им сообщение, скорее всего,
+   * уже ушло, и решать по ним надо глядя в диалог, а не в статус.
+   * Разобрался — `yarn wrote @ник`.
    */
   @Post('release-stuck')
-  public async releaseStuck() {
-    const released = await this.leads.releaseStuckSending();
-    return { released };
+  public releaseStuck() {
+    return this.leads.releaseStuckSending();
   }
 }

@@ -197,6 +197,25 @@ export class ScannerService implements OnModuleInit, OnModuleDestroy {
     return summary;
   }
 
+  /**
+   * Разовый проход по одному чату из HTTP.
+   *
+   * Идёт через тот же флаг занятости, что и полный скан: два прохода по
+   * одному чату одновременно затирают курсор друг друга и задваивают
+   * счётчики сообщений у лидов.
+   */
+  public async scanOne(chatRef: string): Promise<ChatScanResult> {
+    if (this.running) {
+      throw new Error('Скан уже идёт — дождись окончания');
+    }
+    this.running = true;
+    try {
+      return await this.scanChat(chatRef);
+    } finally {
+      this.running = false;
+    }
+  }
+
   public async scanChat(chatRef: string): Promise<ChatScanResult> {
     const state = await this.getOrCreateState(chatRef);
 

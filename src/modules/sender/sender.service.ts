@@ -14,11 +14,14 @@ export interface SendReport {
   attempted: number;
   sent: number;
   failed: number;
+  skipped: number;
   stoppedBecause: string;
+  /** Остановились из-за ограничения аккаунта. Планировщик обязан это учесть. */
+  fatal: boolean;
   dailyBudget: { limit: number; used: number; remaining: number };
   entries: Array<{
     username: string;
-    result: 'sent' | 'dry-run' | 'failed';
+    result: 'sent' | 'dry-run' | 'failed' | 'skipped';
     error?: string;
   }>;
 }
@@ -34,6 +37,16 @@ const FATAL_ERRORS = [
   'AUTH_KEY',
   'SESSION_REVOKED',
 ];
+
+/**
+ * Альбом ушёл, а текст следом — нет. Сообщение человек уже видит, поэтому
+ * это НЕ провал: считать его провалом значит отправить всё заново.
+ */
+class PartialDeliveryError extends Error {
+  constructor(public readonly cause: unknown) {
+    super(`частичная доставка: картинки ушли, текст — нет (${describeError(cause)})`);
+  }
+}
 
 @Injectable()
 export class SenderService {
@@ -53,9 +66,30 @@ export class SenderService {
     return this.running;
   }
 
+  /**
+   * Флаг занятости ставится СРАЗУ после проверки, до любых await.
+   * Раньше он выставлялся уже после обращения к @SpamBot, а тот при
+   * холодном кеше опрашивается до десяти секунд — за это окно в run
+   * заходил второй вызов, оба читали один и тот же остаток бюджета, и
+   * суточная норма удваивалась.
+   */
   public async run(limitOverride?: number): Promise<SendReport> {
     if (this.running) throw new Error('Рассылка уже идёт');
+    this.running = true;
 
+    try {
+      return await this.execute(limitOverride);
+    } finally {
+      this.running = false;
+    }
+  }
+
+  /** Ровно одно сообщение — режим расписания. */
+  public async sendOne(): Promise<SendReport> {
+    return this.run(1);
+  }
+
+  private async execute(limitOverride?: number): Promise<SendReport> {
     const content = loadMessageContent(this.config.contentDir);
     // Явный limit из команды главнее SEND_MAX_PER_RUN: ты набираешь это
     // число руками на каждый запуск. Суточный бюджет — другое дело,
@@ -68,7 +102,9 @@ export class SenderService {
       attempted: 0,
       sent: 0,
       failed: 0,
+      skipped: 0,
       stoppedBecause: 'очередь закончилась',
+      fatal: false,
       dailyBudget: {
         limit: budget.limit,
         used: budget.used,
@@ -80,7 +116,8 @@ export class SenderService {
     if (!this.config.dryRun) {
       const blocked = await this.blockReason(budget.remaining);
       if (blocked) {
-        report.stoppedBecause = blocked;
+        report.stoppedBecause = blocked.reason;
+        report.fatal = blocked.fatal;
         return report;
       }
     }
@@ -89,97 +126,119 @@ export class SenderService {
     // молча урезать значит соврать о том, сколько людей получит письмо.
     const limit = this.config.dryRun ? requested : Math.min(requested, budget.remaining);
 
-    this.running = true;
-    try {
-      // В dry-run лидов не занимаем: статусы должны остаться нетронутыми,
-      // иначе «просто посмотреть» молча выведет людей из очереди.
-      const targets = this.config.dryRun
-        ? (await this.leads.findForOutreach(limit)).items
-        : await this.leads.claimForSending(limit);
+    // В dry-run лидов не занимаем: статусы должны остаться нетронутыми,
+    // иначе «просто посмотреть» молча выведет людей из очереди.
+    const targets = this.config.dryRun
+      ? (await this.leads.findForOutreach(limit)).items
+      : await this.leads.claimForSending(limit);
 
-      let consecutiveErrors = 0;
+    let consecutiveErrors = 0;
 
-      for (const [index, lead] of targets.entries()) {
-        report.attempted += 1;
+    for (const [index, lead] of targets.entries()) {
+      report.attempted += 1;
 
-        if (this.config.dryRun) {
-          report.entries.push({ username: lead.username, result: 'dry-run' });
-          continue;
+      if (this.config.dryRun) {
+        report.entries.push({ username: lead.username, result: 'dry-run' });
+        continue;
+      }
+
+      // Между занятием пачки и очередью конкретного человека проходят
+      // минуты. Сверка с личкой за это время могла перевести его в
+      // contacted — значит письмо уже есть, второе не шлём.
+      if (!(await this.leads.isStillClaimed(lead.id))) {
+        report.skipped += 1;
+        report.entries.push({ username: lead.username, result: 'skipped' });
+        this.logger.warn(
+          `Пропущен @${lead.username}: статус изменился, пока ждал очереди`,
+        );
+        continue;
+      }
+
+      let outcome: { ok: boolean; error?: string; fatal?: boolean };
+      try {
+        outcome = await this.deliver(lead, content);
+      } catch (err) {
+        // deliver ловит ошибки отправки сам, поэтому сюда попадает только
+        // сбой ДО обращения к Telegram (например запись журнала). Текущему
+        // не отправляли — возвращаем в очередь и его, и весь хвост.
+        report.stoppedBecause = `внутренняя ошибка: ${describeError(err)}`;
+        this.logger.error(report.stoppedBecause);
+        await this.releaseRest(targets, index);
+        return this.withFreshBudget(report);
+      }
+
+      if (outcome.ok) {
+        report.sent += 1;
+        report.entries.push({ username: lead.username, result: 'sent' });
+        consecutiveErrors = 0;
+        this.logger.log(
+          `Отправлено @${lead.username} (${report.sent}/${targets.length})`,
+        );
+      } else {
+        report.failed += 1;
+        report.entries.push({
+          username: lead.username,
+          result: 'failed',
+          error: outcome.error,
+        });
+        consecutiveErrors += 1;
+        this.logger.warn(`Не отправлено @${lead.username}: ${outcome.error}`);
+
+        if (outcome.fatal) {
+          report.stoppedBecause = `аккаунт ограничен: ${outcome.error}`;
+          report.fatal = true;
+          // Ограничение уже наступило — сбрасываем кеш статуса, чтобы
+          // следующий запуск спросил @SpamBot, а не поверил старому «ок».
+          await this.account.status(true).catch(() => undefined);
+          await this.releaseRest(targets, index + 1);
+          break;
         }
-
-        const outcome = await this.deliver(lead, content);
-
-        if (outcome.ok) {
-          report.sent += 1;
-          report.entries.push({ username: lead.username, result: 'sent' });
-          consecutiveErrors = 0;
-          this.logger.log(
-            `Отправлено @${lead.username} (${report.sent}/${targets.length})`,
-          );
-        } else {
-          report.failed += 1;
-          report.entries.push({
-            username: lead.username,
-            result: 'failed',
-            error: outcome.error,
-          });
-          consecutiveErrors += 1;
-          this.logger.warn(`Не отправлено @${lead.username}: ${outcome.error}`);
-
-          if (outcome.fatal) {
-            report.stoppedBecause = `аккаунт ограничен: ${outcome.error}`;
-            // Ограничение уже наступило — сбрасываем кеш статуса, чтобы
-            // следующий запуск спросил @SpamBot, а не поверил старому «ок».
-            await this.account.status(true).catch(() => undefined);
-            await this.releaseRest(targets, index + 1);
-            break;
-          }
-          if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
-            report.stoppedBecause = `${consecutiveErrors} ошибки подряд — останавливаюсь`;
-            await this.releaseRest(targets, index + 1);
-            break;
-          }
-        }
-
-        if (index < targets.length - 1) {
-          await sleepJitter(this.config.delaySec * 1000);
+        if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
+          report.stoppedBecause = `${consecutiveErrors} ошибки подряд — останавливаюсь`;
+          await this.releaseRest(targets, index + 1);
+          break;
         }
       }
 
-      if (report.stoppedBecause === 'очередь закончилась' && report.attempted >= limit) {
-        report.stoppedBecause =
-          limit < requested
-            ? `суточный бюджет: осталось ${budget.remaining} из ${budget.limit}`
-            : `упёрлись в лимит запуска (${limit})`;
+      if (index < targets.length - 1) {
+        await sleepJitter(this.config.delaySec * 1000);
       }
-    } finally {
-      this.running = false;
     }
 
+    if (report.stoppedBecause === 'очередь закончилась' && report.attempted >= limit) {
+      report.stoppedBecause =
+        limit < requested
+          ? `суточный бюджет: осталось ${budget.remaining} из ${budget.limit}`
+          : `упёрлись в лимит запуска (${limit})`;
+    }
+
+    return this.withFreshBudget(report);
+  }
+
+  private async withFreshBudget(report: SendReport): Promise<SendReport> {
     const after = await this.attempts.budget(this.config.maxPerDay);
     report.dailyBudget = {
       limit: after.limit,
       used: after.used,
       remaining: after.remaining,
     };
-
     return report;
   }
 
-  /** Ровно одно сообщение — режим расписания. */
-  public async sendOne(): Promise<SendReport> {
-    return this.run(1);
-  }
-
   /** Почему отправлять нельзя прямо сейчас. null — можно. */
-  private async blockReason(remaining: number): Promise<string | null> {
+  private async blockReason(
+    remaining: number,
+  ): Promise<{ reason: string; fatal: boolean } | null> {
     if (remaining <= 0) {
-      return `суточный бюджет исчерпан (${this.config.maxPerDay} за 24 часа)`;
+      return {
+        reason: `суточный бюджет исчерпан (${this.config.maxPerDay} за 24 часа)`,
+        fatal: false,
+      };
     }
 
     try {
       const status = await this.account.status();
-      if (!status.canSend) return status.reason;
+      if (!status.canSend) return { reason: status.reason, fatal: true };
     } catch (err) {
       // Не смогли спросить @SpamBot — это не повод останавливать работу,
       // но и молчать нельзя: человек должен видеть, что предохранитель
@@ -202,6 +261,16 @@ export class SenderService {
     try {
       await this.sendTo(lead, content);
     } catch (err) {
+      if (err instanceof PartialDeliveryError) {
+        // Картинки человек уже видит. Помечаем отправленным, чтобы не
+        // прислать всё заново, но оставляем след в журнале.
+        const note = err.message;
+        this.logger.warn(`@${lead.username}: ${note}`);
+        await this.safeFinishAttempt(attemptId, 'sent', note);
+        await this.safeFinishLead(lead, 'contacted', note);
+        return { ok: true };
+      }
+
       const error = describeError(err);
       await this.safeFinishAttempt(attemptId, 'failed', error);
       await this.safeFinishLead(lead, 'failed', `ошибка отправки: ${error}`);
@@ -260,7 +329,11 @@ export class SenderService {
     // такой, чтобы человек сначала увидел скриншоты: без них длинная
     // простыня читается как реклама.
     await client.sendFile(peer, { file: content.images });
-    await client.sendMessage(peer, { message: content.text });
+    try {
+      await client.sendMessage(peer, { message: content.text });
+    } catch (err) {
+      throw new PartialDeliveryError(err);
+    }
   }
 
   /**

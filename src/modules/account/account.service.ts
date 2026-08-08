@@ -27,6 +27,13 @@ export class AccountService {
 
   private cached: AccountStatus | null = null;
 
+  /**
+   * Запрос в полёте. Планировщик и ручной запуск легко попадают сюда
+   * одновременно, а два `/start` подряд в @SpamBot — сама по себе
+   * подозрительная активность, да и второй ответ всё равно будет тем же.
+   */
+  private inFlight: Promise<AccountStatus> | null = null;
+
   constructor(
     private readonly config: AccountConfig,
     private readonly telegram: TelegramClientService,
@@ -53,6 +60,16 @@ export class AccountService {
       if (this.cached.until.getTime() > Date.now()) return this.cached;
     }
 
+    if (this.inFlight) return this.inFlight;
+
+    this.inFlight = this.refresh().finally(() => {
+      this.inFlight = null;
+    });
+
+    return this.inFlight;
+  }
+
+  private async refresh(): Promise<AccountStatus> {
     const reply = await this.ask();
     const parsed = parseSpamBotReply(reply);
     this.cached = this.decide(parsed);

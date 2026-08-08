@@ -21,7 +21,7 @@ export class ScannerController {
   /** Разовый проход по одному чату — удобно, когда добавил новый в SCAN_CHATS. */
   @Post('run-one')
   public runOne(@Body() body: ScanOneChatDto) {
-    return this.scanner.scanChat(body.chat);
+    return this.scanner.scanOne(body.chat);
   }
 
   @Get('status')
