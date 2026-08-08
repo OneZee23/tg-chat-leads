@@ -354,6 +354,19 @@ export class LeadService {
     return affected ?? 0;
   }
 
+  /**
+   * telegram-id всех, кто ещё в работе. Нужен сверке с личкой: глубокая
+   * проверка стоит запрос к Telegram на диалог, и гонять её по всем 300
+   * личным чатам бессмысленно — 9 из 10 это друзья и родня, которых в
+   * базе лидов нет и пометить некого.
+   */
+  public async getPendingTgIds(): Promise<Set<string>> {
+    const rows: Array<{ tg_user_id: string }> = await this.repo.query(
+      `SELECT tg_user_id FROM tg_lead WHERE status IN ('new', 'sending')`,
+    );
+    return new Set(rows.map((row) => String(row.tg_user_id)));
+  }
+
   public async stats(): Promise<Record<string, number>> {
     const rows: Array<{ status: string; count: string }> = await this.repo
       .createQueryBuilder('lead')

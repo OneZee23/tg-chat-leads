@@ -100,6 +100,13 @@ export class DialogsService {
       deepChecks: 0,
     };
 
+    // Глубокая проверка стоит запрос к Telegram на каждый диалог, и на
+    // трёх сотнях личных чатов это гарантированный FloodWait. При этом
+    // 9 из 10 диалогов — друзья и родня, которых в базе лидов нет и
+    // пометить всё равно некого. Поэтому лезем в историю только к тем,
+    // кто реально ждёт своей очереди.
+    const pending = await this.leads.getPendingTgIds();
+
     for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
       result.dialogsSeen += 1;
       if (!dialog.isUser) continue;
@@ -114,7 +121,7 @@ export class DialogsService {
       // ответа — самый частый случай, и он бесплатен.
       let iWrote = dialog.message?.out === true;
 
-      if (!iWrote && this.config.deepCheck) {
+      if (!iWrote && this.config.deepCheck && pending.has(entity.id.toString())) {
         result.deepChecks += 1;
         iWrote = await this.hasOutgoing(entity);
         await sleep(this.config.deepDelayMs);

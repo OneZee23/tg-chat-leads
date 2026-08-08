@@ -25,7 +25,10 @@ export class DialogsConfig extends ConfigFragment {
 
   @IsInt()
   @Min(0)
-  @UseEnv('CONTACTED_DEEP_DELAY_MS', parseIntWithDefault(400))
+  // 1.5 сек, а не 400 мс: Telegram довольно быстро отвечает FloodWait'ом
+  // на частые messages.GetHistory. Глубоких проверок теперь единицы,
+  // так что пауза длиннее ничего не замедляет.
+  @UseEnv('CONTACTED_DEEP_DELAY_MS', parseIntWithDefault(1500))
   public readonly deepDelayMs: number;
 
   /** Сколько последних сообщений диалога просмотреть в глубокой проверке. */
