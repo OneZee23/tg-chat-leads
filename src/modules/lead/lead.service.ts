@@ -322,6 +322,22 @@ export class LeadService {
     );
   }
 
+  /**
+   * Вернуть в очередь тех, кому НИЧЕГО не отправлялось (рассылка
+   * остановилась раньше, чем дошла до них). Именно `new`, а не `failed`:
+   * `failed` означает «пытались и не вышло», и такие люди выпадают из
+   * работы, хотя ни одного сообщения не получили.
+   */
+  public async releaseToQueue(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+
+    const [, affected]: [unknown[], number] = await this.repo.query(
+      `UPDATE tg_lead SET status = 'new', updated_at = now() WHERE id = ANY($1::uuid[])`,
+      [ids],
+    );
+    return affected ?? 0;
+  }
+
   /** Вернуть застрявших в `sending` обратно в очередь (после падения). */
   public async releaseStuckSending(): Promise<number> {
     const [, affected]: [unknown[], number] = await this.repo.query(

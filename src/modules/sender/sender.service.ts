@@ -52,7 +52,10 @@ export class SenderService {
     if (this.running) throw new Error('Рассылка уже идёт');
 
     const content = loadMessageContent(this.config.contentDir);
-    const limit = Math.min(limitOverride ?? this.config.maxPerRun, this.config.maxPerRun);
+    // Явный limit из команды главнее конфига: ты набираешь это число руками
+    // на каждый запуск, и молча урезать его до SEND_MAX_PER_RUN — значит
+    // соврать в ответе. Верхняя граница остаётся в DTO контроллера.
+    const limit = limitOverride ?? this.config.maxPerRun;
 
     const report: SendReport = {
       dryRun: this.config.dryRun,
@@ -154,15 +157,13 @@ export class SenderService {
     await client.sendMessage(peer, { message: content.text });
   }
 
-  /** Вернуть невзятых в очередь, чтобы они не зависли в `sending`. */
-  private async releaseRest(targets: LeadEntity[], from: number): Promise<void> {
-    for (const lead of targets.slice(from)) {
-      await this.leads.finishSending(
-        lead.id,
-        'failed',
-        'не дошла очередь: рассылка остановлена',
-      );
-    }
+  /**
+   * Вернуть в очередь тех, до кого не дошли. Им ничего не отправлялось,
+   * поэтому `new`, а не `failed` — иначе при первом же PEER_FLOOD хвост
+   * пачки молча выпадет из работы.
+   */
+  private async releaseRest(targets: LeadEntity[], from: number): Promise<number> {
+    return this.leads.releaseToQueue(targets.slice(from).map((lead) => lead.id));
   }
 }
 
