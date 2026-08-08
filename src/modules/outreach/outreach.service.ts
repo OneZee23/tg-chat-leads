@@ -43,6 +43,8 @@ export class OutreachService {
       messagesSeen: scan.totals.messagesSeen,
       newLeads: scan.totals.leadsCreated,
       contactedMarked: contacted.leadsMarked,
+      repliedMarked: contacted.repliedMarked,
+      outreach: await this.leads.outreachSummary(),
       chats: scan.chats.map((chat) => ({
         chat: chat.chat,
         messagesSeen: chat.messagesSeen,

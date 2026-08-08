@@ -58,6 +58,8 @@ export function formatRefreshSummary(summary: {
   messagesSeen: number;
   newLeads: number;
   contactedMarked: number;
+  repliedMarked: number;
+  outreach: { contacted: number; replied: number };
   chats: Array<{ chat: string; messagesSeen: number; error?: string }>;
 }): string {
   const lines: string[] = ['', 'Обновление закончено.', ''];
@@ -71,8 +73,21 @@ export function formatRefreshSummary(summary: {
   lines.push(`  Прочитано сообщений:      ${summary.messagesSeen}`);
   lines.push(`  Новых людей в базе:       ${summary.newLeads}`);
   lines.push(`  Отсеяно (уже писал):      ${summary.contactedMarked}`);
+  lines.push(`  Новых ответов:            ${summary.repliedMarked}`);
+  lines.push('');
+  // Главная цифра всей затеи. Пока она нулевая, расширять сбор лидов
+  // бессмысленно — чинить надо сообщение, а не объём.
+  lines.push(
+    `  ОТВЕТИЛИ: ${summary.outreach.replied} из ${summary.outreach.contacted} ` +
+      `(${formatRate(summary.outreach.replied, summary.outreach.contacted)})`,
+  );
 
   return lines.join('\n');
+}
+
+function formatRate(part: number, total: number): string {
+  if (total === 0) return '—';
+  return `${((part / total) * 100).toFixed(1)}%`;
 }
 
 function snippet(text: string | null): string {

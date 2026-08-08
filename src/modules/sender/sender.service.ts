@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { FloodWaitError } from 'telegram/errors';
 import { sleepJitter } from '@common/utils/sleep';
+import { AccountService } from '@modules/account/account.service';
 import { LeadEntity } from '@modules/lead/lead.entity';
 import { LeadService } from '@modules/lead/lead.service';
 import { loadMessageContent, MessageContent } from '@modules/sender/message-content';
+import { SendAttemptService } from '@modules/sender/send-attempt.service';
 import { SenderConfig } from '@modules/sender/sender.config';
 import { TelegramClientService } from '@modules/telegram/telegram-client.service';
 
@@ -13,6 +15,7 @@ export interface SendReport {
   sent: number;
   failed: number;
   stoppedBecause: string;
+  dailyBudget: { limit: number; used: number; remaining: number };
   entries: Array<{
     username: string;
     result: 'sent' | 'dry-run' | 'failed';
@@ -42,6 +45,8 @@ export class SenderService {
     private readonly config: SenderConfig,
     private readonly telegram: TelegramClientService,
     private readonly leads: LeadService,
+    private readonly attempts: SendAttemptService,
+    private readonly account: AccountService,
   ) {}
 
   public isRunning(): boolean {
@@ -52,10 +57,11 @@ export class SenderService {
     if (this.running) throw new Error('Рассылка уже идёт');
 
     const content = loadMessageContent(this.config.contentDir);
-    // Явный limit из команды главнее конфига: ты набираешь это число руками
-    // на каждый запуск, и молча урезать его до SEND_MAX_PER_RUN — значит
-    // соврать в ответе. Верхняя граница остаётся в DTO контроллера.
-    const limit = limitOverride ?? this.config.maxPerRun;
+    // Явный limit из команды главнее SEND_MAX_PER_RUN: ты набираешь это
+    // число руками на каждый запуск. Суточный бюджет — другое дело,
+    // он обойти не даёт, в том числе и явным числом.
+    const requested = limitOverride ?? this.config.maxPerRun;
+    const budget = await this.attempts.budget(this.config.maxPerDay);
 
     const report: SendReport = {
       dryRun: this.config.dryRun,
@@ -63,8 +69,25 @@ export class SenderService {
       sent: 0,
       failed: 0,
       stoppedBecause: 'очередь закончилась',
+      dailyBudget: {
+        limit: budget.limit,
+        used: budget.used,
+        remaining: budget.remaining,
+      },
       entries: [],
     };
+
+    if (!this.config.dryRun) {
+      const blocked = await this.blockReason(budget.remaining);
+      if (blocked) {
+        report.stoppedBecause = blocked;
+        return report;
+      }
+    }
+
+    // Бюджет режет запрошенное число, и об этом честно пишем в отчёте —
+    // молча урезать значит соврать о том, сколько людей получит письмо.
+    const limit = this.config.dryRun ? requested : Math.min(requested, budget.remaining);
 
     this.running = true;
     try {
@@ -84,19 +107,9 @@ export class SenderService {
           continue;
         }
 
-        // Отправка и отметка разделены намеренно. Если их держать в одном
-        // try, падение отметки уводит уже отправленное сообщение в ветку
-        // «ошибка отправки» — человек письмо получил, а в базе висит
-        // failed, и при следующем запуске получит второе.
-        let sendError: unknown = null;
-        try {
-          await this.sendTo(lead, content);
-        } catch (err) {
-          sendError = err;
-        }
+        const outcome = await this.deliver(lead, content);
 
-        if (sendError === null) {
-          await this.safeFinish(lead, 'contacted', 'отправлено рассылкой');
+        if (outcome.ok) {
           report.sent += 1;
           report.entries.push({ username: lead.username, result: 'sent' });
           consecutiveErrors = 0;
@@ -104,19 +117,20 @@ export class SenderService {
             `Отправлено @${lead.username} (${report.sent}/${targets.length})`,
           );
         } else {
-          const message = describeError(sendError);
-          await this.safeFinish(lead, 'failed', `ошибка отправки: ${message}`);
           report.failed += 1;
           report.entries.push({
             username: lead.username,
             result: 'failed',
-            error: message,
+            error: outcome.error,
           });
           consecutiveErrors += 1;
-          this.logger.warn(`Не отправлено @${lead.username}: ${message}`);
+          this.logger.warn(`Не отправлено @${lead.username}: ${outcome.error}`);
 
-          if (isFatal(sendError)) {
-            report.stoppedBecause = `аккаунт ограничен: ${message}`;
+          if (outcome.fatal) {
+            report.stoppedBecause = `аккаунт ограничен: ${outcome.error}`;
+            // Ограничение уже наступило — сбрасываем кеш статуса, чтобы
+            // следующий запуск спросил @SpamBot, а не поверил старому «ок».
+            await this.account.status(true).catch(() => undefined);
             await this.releaseRest(targets, index + 1);
             break;
           }
@@ -132,21 +146,88 @@ export class SenderService {
         }
       }
 
-      if (report.attempted >= limit && report.stoppedBecause === 'очередь закончилась') {
-        report.stoppedBecause = `упёрлись в лимит запуска (${limit})`;
+      if (report.stoppedBecause === 'очередь закончилась' && report.attempted >= limit) {
+        report.stoppedBecause =
+          limit < requested
+            ? `суточный бюджет: осталось ${budget.remaining} из ${budget.limit}`
+            : `упёрлись в лимит запуска (${limit})`;
       }
     } finally {
       this.running = false;
     }
 
+    const after = await this.attempts.budget(this.config.maxPerDay);
+    report.dailyBudget = {
+      limit: after.limit,
+      used: after.used,
+      remaining: after.remaining,
+    };
+
     return report;
   }
 
-  /**
-   * Отметка не имеет права уронить рассылку: сообщения уже ушли, и падение
-   * на записи в базу оставит их неучтёнными. Проблему кричим в лог.
-   */
-  private async safeFinish(
+  /** Ровно одно сообщение — режим расписания. */
+  public async sendOne(): Promise<SendReport> {
+    return this.run(1);
+  }
+
+  /** Почему отправлять нельзя прямо сейчас. null — можно. */
+  private async blockReason(remaining: number): Promise<string | null> {
+    if (remaining <= 0) {
+      return `суточный бюджет исчерпан (${this.config.maxPerDay} за 24 часа)`;
+    }
+
+    try {
+      const status = await this.account.status();
+      if (!status.canSend) return status.reason;
+    } catch (err) {
+      // Не смогли спросить @SpamBot — это не повод останавливать работу,
+      // но и молчать нельзя: человек должен видеть, что предохранитель
+      // в этот раз не сработал.
+      this.logger.warn(`Не удалось проверить статус аккаунта: ${describeError(err)}`);
+    }
+
+    return null;
+  }
+
+  private async deliver(
+    lead: LeadEntity,
+    content: MessageContent,
+  ): Promise<{ ok: boolean; error?: string; fatal?: boolean }> {
+    // Журнал пишем ДО обращения к Telegram: если процесс умрёт в этот
+    // момент, останется строка `started` без исхода — прямое указание
+    // проверить диалог руками, а не гадать.
+    const attemptId = await this.attempts.start(lead);
+
+    try {
+      await this.sendTo(lead, content);
+    } catch (err) {
+      const error = describeError(err);
+      await this.safeFinishAttempt(attemptId, 'failed', error);
+      await this.safeFinishLead(lead, 'failed', `ошибка отправки: ${error}`);
+      return { ok: false, error, fatal: isFatal(err) };
+    }
+
+    // Отправка удалась. Дальше только запись в базу, и её сбой не имеет
+    // права выдать отправленное за неотправленное.
+    await this.safeFinishAttempt(attemptId, 'sent');
+    await this.safeFinishLead(lead, 'contacted', 'отправлено рассылкой');
+    return { ok: true };
+  }
+
+  private async safeFinishAttempt(
+    id: string,
+    result: 'sent' | 'failed',
+    error?: string,
+  ): Promise<void> {
+    try {
+      await this.attempts.finish(id, result, error);
+    } catch (err) {
+      this.logger.error(`Не удалось закрыть попытку ${id}: ${describeError(err)}`);
+    }
+  }
+
+  private async safeFinishLead(
     lead: LeadEntity,
     outcome: 'contacted' | 'failed',
     note: string,
@@ -156,8 +237,7 @@ export class SenderService {
     } catch (err) {
       this.logger.error(
         `НЕ УДАЛОСЬ ОТМЕТИТЬ @${lead.username} как ${outcome}: ${describeError(err)}. ` +
-          'Отметь вручную: yarn wrote @' +
-          lead.username,
+          `Отметь вручную: yarn wrote @${lead.username}`,
       );
     }
   }

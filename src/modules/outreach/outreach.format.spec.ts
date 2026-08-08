@@ -86,20 +86,41 @@ describe('formatOutreachList', () => {
 });
 
 describe('formatRefreshSummary', () => {
+  const base = {
+    messagesSeen: 120,
+    newLeads: 7,
+    contactedMarked: 3,
+    repliedMarked: 1,
+    outreach: { contacted: 157, replied: 4 },
+    chats: [
+      { chat: '@one', messagesSeen: 100 },
+      { chat: '@two', messagesSeen: 20, error: 'FloodWait 300s' },
+    ],
+  };
+
   it('показывает итоги по каждому чату и общие', () => {
-    const out = formatRefreshSummary({
-      messagesSeen: 120,
-      newLeads: 7,
-      contactedMarked: 3,
-      chats: [
-        { chat: '@one', messagesSeen: 100 },
-        { chat: '@two', messagesSeen: 20, error: 'FloodWait 300s' },
-      ],
-    });
+    const out = formatRefreshSummary(base);
 
     expect(out).toContain('@one: новых сообщений 100');
     expect(out).toContain('FloodWait 300s');
     expect(out).toContain('120');
     expect(out).toContain('7');
+  });
+
+  it('выводит главную цифру — конверсию в ответы', () => {
+    const out = formatRefreshSummary(base);
+
+    expect(out).toContain('ОТВЕТИЛИ: 4 из 157');
+    expect(out).toContain('2.5%');
+  });
+
+  it('не делит на ноль, когда никому ещё не писали', () => {
+    const out = formatRefreshSummary({
+      ...base,
+      outreach: { contacted: 0, replied: 0 },
+    });
+
+    expect(out).toContain('ОТВЕТИЛИ: 0 из 0');
+    expect(out).not.toContain('NaN');
   });
 });

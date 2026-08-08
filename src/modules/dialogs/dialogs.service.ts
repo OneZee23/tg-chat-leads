@@ -25,6 +25,8 @@ export interface ContactedSyncResult {
   contactedTotal: number;
   /** Из них нашлись в собранной базе лидов и были переведены в contacted. */
   leadsMarked: number;
+  /** Переведены в `replied`: ответили после нашего письма. */
+  repliedMarked: number;
   deepChecks: number;
 }
 
@@ -92,13 +94,20 @@ export class DialogsService {
   public async syncContacted(): Promise<ContactedSyncResult> {
     const client = this.telegram.getClient();
     const contactedIds: string[] = [];
+    const repliedIds: string[] = [];
     const result: ContactedSyncResult = {
       dialogsSeen: 0,
       privateDialogs: 0,
       contactedTotal: 0,
       leadsMarked: 0,
+      repliedMarked: 0,
       deepChecks: 0,
     };
+
+    // Кому уже писали и когда. Входящее сообщение считаем ответом только
+    // если оно позже нашего письма — иначе в «ответившие» попадут те, кто
+    // когда-то писал тебе по другому поводу.
+    const contactedAt = await this.leads.getContactedAtMap();
 
     // Глубокая проверка стоит запрос к Telegram на каждый диалог, и на
     // трёх сотнях личных чатов это гарантированный FloodWait. При этом
@@ -116,12 +125,13 @@ export class DialogsService {
       if (entity.bot || entity.self) continue;
 
       result.privateDialogs += 1;
+      const peerId = entity.id.toString();
 
       // Дешёвый путь: моё сообщение последнее. Для холодного аутрича без
       // ответа — самый частый случай, и он бесплатен.
       let iWrote = dialog.message?.out === true;
 
-      if (!iWrote && this.config.deepCheck && pending.has(entity.id.toString())) {
+      if (!iWrote && this.config.deepCheck && pending.has(peerId)) {
         result.deepChecks += 1;
         iWrote = await this.hasOutgoing(entity);
         await sleep(this.config.deepDelayMs);
@@ -129,15 +139,40 @@ export class DialogsService {
 
       if (iWrote) {
         result.contactedTotal += 1;
-        contactedIds.push(entity.id.toString());
+        contactedIds.push(peerId);
+      }
+
+      // Ответ = последнее сообщение в диалоге входящее, и до него было наше.
+      // Два источника доказательства «до него было наше»:
+      //  • лид уже в статусе contacted — тогда сверяем время, чтобы старая
+      //    переписка по другому поводу не сошла за ответ;
+      //  • иначе глубокая проверка нашла исходящее в истории. Раз последнее
+      //    сообщение входящее, значит человек написал после нас. Это ловит
+      //    того, кто ответил на письмо рассылки в тот же день, за один проход.
+      if (dialog.message?.out === false) {
+        const incomingAt = new Date(dialog.message.date * 1000);
+        const sentAt = contactedAt.get(peerId);
+
+        if (contactedAt.has(peerId)) {
+          if (!sentAt || incomingAt.getTime() > sentAt.getTime()) {
+            repliedIds.push(peerId);
+          }
+        } else if (iWrote) {
+          repliedIds.push(peerId);
+        }
       }
     }
 
     result.leadsMarked = await this.leads.markContacted(contactedIds);
+    // Строго после contacted: markReplied переводит только из contacted,
+    // поэтому человек, которого мы пометили написанным прямо сейчас,
+    // за тот же проход доедет до replied. При обратном порядке застрял бы.
+    result.repliedMarked = await this.leads.markReplied(repliedIds);
 
     this.logger.log(
       `Диалогов ${result.dialogsSeen}, личных ${result.privateDialogs}, ` +
-        `уже писал ${result.contactedTotal}, из них лидов помечено ${result.leadsMarked}`,
+        `уже писал ${result.contactedTotal}, помечено лидов ${result.leadsMarked}, ` +
+        `ответили ${result.repliedMarked}`,
     );
 
     return result;

@@ -367,6 +367,58 @@ export class LeadService {
     return new Set(rows.map((row) => String(row.tg_user_id)));
   }
 
+  /**
+   * telegram-id → момент отправки, для тех кому уже написали.
+   * Нужен для распознавания ответов: входящее сообщение считается ответом
+   * только если оно ПОЗЖЕ нашего письма. Иначе в «ответившие» попадут те,
+   * кто когда-то писал тебе по совсем другому поводу.
+   */
+  public async getContactedAtMap(): Promise<Map<string, Date | null>> {
+    const rows: Array<{ tg_user_id: string; contacted_at: Date | null }> =
+      await this.repo.query(
+        `SELECT tg_user_id, contacted_at FROM tg_lead WHERE status = 'contacted'`,
+      );
+
+    return new Map(rows.map((row) => [String(row.tg_user_id), row.contacted_at]));
+  }
+
+  /** Перевод в `replied`. Трогаем только `contacted` — остальное руками. */
+  public async markReplied(tgUserIds: string[]): Promise<number> {
+    if (tgUserIds.length === 0) return 0;
+
+    // См. markContacted: на UPDATE typeorm отдаёт [rows, count].
+    const [, affected]: [unknown[], number] = await this.repo.query(
+      `
+      UPDATE tg_lead
+      SET status = 'replied', updated_at = now()
+      WHERE tg_user_id = ANY($1::bigint[])
+        AND status = 'contacted'
+      `,
+      [tgUserIds],
+    );
+
+    return affected ?? 0;
+  }
+
+  /** Сводка по аутричу: написано / ответили. */
+  public async outreachSummary(): Promise<{ contacted: number; replied: number }> {
+    const rows: Array<{ contacted: string; replied: string }> = await this.repo.query(
+      `
+      SELECT
+        count(*) FILTER (WHERE status IN ('contacted', 'replied', 'registered', 'rejected'))::text
+          AS contacted,
+        count(*) FILTER (WHERE status IN ('replied', 'registered', 'rejected'))::text
+          AS replied
+      FROM tg_lead
+      `,
+    );
+
+    return {
+      contacted: Number(rows[0]?.contacted ?? 0),
+      replied: Number(rows[0]?.replied ?? 0),
+    };
+  }
+
   public async stats(): Promise<Record<string, number>> {
     const rows: Array<{ status: string; count: string }> = await this.repo
       .createQueryBuilder('lead')

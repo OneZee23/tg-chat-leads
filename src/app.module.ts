@@ -4,6 +4,7 @@ import { ApiTokenGuard } from '@common/auth/api-token.guard';
 import { DatabaseModule } from '@infra/database/database.module';
 import { HealthController } from '@infra/webserver/health.controller';
 import { LoggerModule } from '@infra/logger/logger.module';
+import { AccountModule } from '@modules/account/account.module';
 import { DialogsModule } from '@modules/dialogs/dialogs.module';
 import { LeadModule } from '@modules/lead/lead.module';
 import { OutreachModule } from '@modules/outreach/outreach.module';
@@ -20,6 +21,7 @@ import { TelegramModule } from '@modules/telegram/telegram.module';
     ScannerModule,
     DialogsModule,
     OutreachModule,
+    AccountModule,
     SenderModule,
   ],
   controllers: [HealthController],
