@@ -18,7 +18,7 @@ describe('OutreachModule (DI)', () => {
       .overrideProvider(getRepositoryToken(ScanStateEntity))
       .useValue({})
       .overrideProvider(TelegramClientService)
-      .useValue({ getClient: () => ({}), getMyId: () => null })
+      .useValue({ getClient: () => ({}), tryGetClient: () => null, getMyId: () => null })
       .compile();
 
     expect(moduleRef.get(OutreachService)).toBeInstanceOf(OutreachService);

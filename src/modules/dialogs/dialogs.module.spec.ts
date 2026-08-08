@@ -11,7 +11,7 @@ describe('DialogsModule (DI)', () => {
       .overrideProvider(getRepositoryToken(LeadEntity))
       .useValue({})
       .overrideProvider(TelegramClientService)
-      .useValue({ getClient: () => ({}), getMyId: () => null })
+      .useValue({ getClient: () => ({}), tryGetClient: () => null, getMyId: () => null })
       .compile();
 
     expect(moduleRef.get(DialogsService)).toBeInstanceOf(DialogsService);

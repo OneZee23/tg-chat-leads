@@ -122,10 +122,15 @@ export class ScannerService implements OnModuleInit, OnModuleDestroy {
 
   public onModuleDestroy(): void {
     if (this.timer) clearInterval(this.timer);
-    if (this.liveHandler) {
-      this.telegram.getClient().removeEventHandler(this.liveHandler, new NewMessage({}));
-      this.liveHandler = null;
+
+    // Клиента может уже не быть: Nest гасит TelegramModule раньше, чем
+    // модули, которые его импортируют. Снимать обработчик у мёртвого
+    // клиента и не нужно — он уничтожается целиком вместе с ним.
+    const client = this.telegram.tryGetClient();
+    if (this.liveHandler && client) {
+      client.removeEventHandler(this.liveHandler, new NewMessage({}));
     }
+    this.liveHandler = null;
   }
 
   public isRunning(): boolean {

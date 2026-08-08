@@ -72,6 +72,18 @@ export class TelegramClientService implements OnModuleInit, OnModuleDestroy {
     return this.client;
   }
 
+  /**
+   * Клиент или null, без исключения.
+   *
+   * Нужен на остановке приложения: Nest гасит модули в порядке
+   * инициализации, а TelegramModule инициализируется раньше тех, кто его
+   * импортирует. Значит в их onModuleDestroy клиента уже нет, и обычный
+   * getClient() кидает ошибку прямо в процессе штатного выключения.
+   */
+  public tryGetClient(): TelegramClient | null {
+    return this.client;
+  }
+
   public getMyId(): string | null {
     return this.me ? this.me.id.toString() : null;
   }
