@@ -14,7 +14,9 @@ import {
 export const LEAD_STATUSES = [
   'new', // только что найден скриптом
   'to_contact', // отобран, писать
+  'sending', // рассылка взяла в работу; ставится ДО отправки
   'contacted', // написал
+  'failed', // отправка не удалась, можно вернуть в работу руками
   'replied', // ответил
   'registered', // дошёл до регистрации в TeachTrack
   'rejected', // отказался

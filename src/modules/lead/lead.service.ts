@@ -267,6 +267,69 @@ export class LeadService {
     return affected ?? 0;
   }
 
+  /**
+   * Забирает лида в работу рассылки: `new` → `sending`, атомарно.
+   *
+   * Статус меняется ДО отправки намеренно. Если процесс умрёт между
+   * отправкой и отметкой, человек получит сообщение и останется `new` —
+   * то есть при следующем запуске получит его второй раз. Лучше наоборот:
+   * при падении лид застрянет в `sending`, и это видно глазами, а
+   * повторного сообщения человек не получит.
+   *
+   * `FOR UPDATE SKIP LOCKED` — на случай, если рассылку случайно запустят
+   * дважды: второй процесс возьмёт других людей, а не тех же самых.
+   */
+  public async claimForSending(limit: number): Promise<LeadEntity[]> {
+    return this.repo.manager.transaction(async (em) => {
+      const rows: Array<{ id: string }> = await em.query(
+        `
+        SELECT id FROM tg_lead
+        WHERE status = 'new' AND username IS NOT NULL
+        ORDER BY score DESC, last_seen_at DESC
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED
+        `,
+        [limit],
+      );
+      if (rows.length === 0) return [];
+
+      const ids = rows.map((row) => row.id);
+      await em.query(
+        `UPDATE tg_lead SET status = 'sending', updated_at = now() WHERE id = ANY($1::uuid[])`,
+        [ids],
+      );
+
+      return em.getRepository(LeadEntity).findByIds(ids);
+    });
+  }
+
+  public async finishSending(
+    id: string,
+    outcome: 'contacted' | 'failed',
+    note: string,
+  ): Promise<void> {
+    await this.repo.query(
+      `
+      UPDATE tg_lead
+      SET status       = $2,
+          contacted_at = CASE WHEN $2 = 'contacted'
+                              THEN COALESCE(contacted_at, now()) ELSE contacted_at END,
+          note         = $3,
+          updated_at   = now()
+      WHERE id = $1
+      `,
+      [id, outcome, note],
+    );
+  }
+
+  /** Вернуть застрявших в `sending` обратно в очередь (после падения). */
+  public async releaseStuckSending(): Promise<number> {
+    const [, affected]: [unknown[], number] = await this.repo.query(
+      `UPDATE tg_lead SET status = 'new', updated_at = now() WHERE status = 'sending'`,
+    );
+    return affected ?? 0;
+  }
+
   public async stats(): Promise<Record<string, number>> {
     const rows: Array<{ status: string; count: string }> = await this.repo
       .createQueryBuilder('lead')
