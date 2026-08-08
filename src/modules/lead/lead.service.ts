@@ -170,11 +170,16 @@ export class LeadService {
    *
    * `= ANY($1::bigint[])` вместо `IN (...)`: список может быть в сотни
    * элементов, а так это один параметр и один план запроса.
+   *
+   * Про возвращаемое значение — грабли TypeORM. Для UPDATE и DELETE
+   * `query()` отдаёт НЕ массив строк, а пару `[rows, rowCount]`
+   * (PostgresQueryRunner, ветка по `raw.command`). Поэтому `.length` здесь
+   * всегда 2, сколько бы строк ни обновилось, и считать надо второй элемент.
    */
   public async markContacted(tgUserIds: string[]): Promise<number> {
     if (tgUserIds.length === 0) return 0;
 
-    const rows: unknown[] = await this.repo.query(
+    const [, affected]: [unknown[], number] = await this.repo.query(
       `
       UPDATE tg_lead
       SET status       = 'contacted',
@@ -183,12 +188,11 @@ export class LeadService {
           updated_at   = now()
       WHERE tg_user_id = ANY($1::bigint[])
         AND status = 'new'
-      RETURNING id
       `,
       [tgUserIds],
     );
 
-    return rows.length;
+    return affected ?? 0;
   }
 
   public async updateStatus(
