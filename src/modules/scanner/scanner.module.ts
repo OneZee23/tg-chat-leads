@@ -11,5 +11,6 @@ import { TelegramModule } from '@modules/telegram/telegram.module';
   imports: [TypeOrmModule.forFeature([ScanStateEntity]), TelegramModule, LeadModule],
   controllers: [ScannerController],
   providers: [ScannerConfig, ScannerService],
+  exports: [ScannerService],
 })
 export class ScannerModule {}

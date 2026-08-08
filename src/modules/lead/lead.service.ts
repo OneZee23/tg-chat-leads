@@ -212,6 +212,61 @@ export class LeadService {
     return this.repo.save(lead);
   }
 
+  /**
+   * Кому можно писать прямо сейчас: ещё не трогали и есть @ник.
+   * Без ника писать некуда — `tg://user?id=` открывается только если у вас
+   * есть общий чат, так что такие лиды в рабочий список не попадают.
+   *
+   * Сортировка: сначала самые «рекламные», при равном score — те, кто
+   * публиковался недавно. Человек, разместивший объявление вчера, ищет
+   * учеников сейчас; тот, кто писал в марте, скорее всего уже нет.
+   */
+  public async findForOutreach(
+    limit: number,
+  ): Promise<{ total: number; items: LeadEntity[] }> {
+    const qb = this.repo
+      .createQueryBuilder('lead')
+      .where('lead.status = :status', { status: 'new' })
+      .andWhere('lead.username IS NOT NULL');
+
+    const total = await qb.getCount();
+    const items = await qb
+      .orderBy('lead.score', 'DESC')
+      .addOrderBy('lead.lastSeenAt', 'DESC')
+      .limit(limit)
+      .getMany();
+
+    return { total, items };
+  }
+
+  /**
+   * Ручная пометка по никам — чтобы не выковыривать uuid из выдачи.
+   * Ник сравниваем в нижнем регистре: в Telegram он регистронезависим,
+   * и «@example_tutor» из списка должен находиться как «@konstantsiia».
+   */
+  public async markByUsernames(usernames: string[], status: LeadStatus): Promise<number> {
+    const normalized = usernames
+      .map((name) => name.trim().replace(/^@/, '').toLowerCase())
+      .filter((name) => name.length > 0);
+
+    if (normalized.length === 0) return 0;
+
+    // См. комментарий в markContacted: на UPDATE typeorm отдаёт [rows, count].
+    const [, affected]: [unknown[], number] = await this.repo.query(
+      `
+      UPDATE tg_lead
+      SET status       = $2,
+          contacted_at = CASE WHEN $2 = 'contacted'
+                              THEN COALESCE(contacted_at, now()) ELSE contacted_at END,
+          updated_at   = now()
+      WHERE lower(username) = ANY($1::text[])
+      `,
+      [normalized, status],
+    );
+
+    return affected ?? 0;
+  }
+
   public async stats(): Promise<Record<string, number>> {
     const rows: Array<{ status: string; count: string }> = await this.repo
       .createQueryBuilder('lead')

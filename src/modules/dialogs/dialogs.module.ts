@@ -12,5 +12,6 @@ import { TelegramModule } from '@modules/telegram/telegram.module';
   // ScannerConfig нужен только чтобы отметить, какие чаты уже в SCAN_CHATS.
   // Он читает env и не держит состояния, так что второй экземпляр безвреден.
   providers: [DialogsConfig, ScannerConfig, DialogsService],
+  exports: [DialogsService],
 })
 export class DialogsModule {}
