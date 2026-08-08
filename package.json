@@ -14,6 +14,8 @@
     "test": "jest",
     "refresh": "curl -sS -XPOST 'http://127.0.0.1:3010/outreach/refresh?limit=30'",
     "leads": "curl -sS 'http://127.0.0.1:3010/outreach/next?limit=30'",
+    "wrote": "sh scripts/mark.sh contacted",
+    "skip": "sh scripts/mark.sh skip",
     "chats": "curl -sS 'http://127.0.0.1:3010/chats?withCounts=true'",
     "session:create": "ts-node -r dotenv/config scripts/create-tg-session.ts",
     "db:up": "docker compose up -d",

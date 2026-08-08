@@ -41,13 +41,14 @@ export function formatOutreachList({ leads, total }: OutreachListInput): string 
   });
 
   lines.push('—'.repeat(60));
-  lines.push('Написал — отмечать ничего не надо: следующий `yarn refresh` увидит');
-  lines.push('переписку в личке и уберёт этих людей из списка сам.');
+  lines.push('Написал — сразу отметь, это важно:');
+  lines.push('  yarn wrote @nick1 @nick2');
+  lines.push('');
+  lines.push('Не полагайся на то, что сверка с личкой поймает переписку сама:');
+  lines.push('человек может удалить диалог «у обоих», и следов не останется.');
   lines.push('');
   lines.push('Кто не подошёл — убрать навсегда:');
-  lines.push(
-    "  curl -s -XPOST 'http://127.0.0.1:3010/outreach/mark?status=skip&usernames=@nick1,@nick2'",
-  );
+  lines.push('  yarn skip @nick1 @nick2');
   lines.push('');
 
   return lines.join('\n');

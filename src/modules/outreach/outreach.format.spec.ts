@@ -53,6 +53,14 @@ describe('formatOutreachList', () => {
     expect(out).toContain('показываю 1');
   });
 
+  it('требует отметить написанных и объясняет почему', () => {
+    const out = formatOutreachList({ leads: [lead({})], total: 1 });
+
+    expect(out).toContain('yarn wrote');
+    // Без объяснения инструкцию проигнорируют — а цена промаха тут высокая.
+    expect(out).toContain('удалить диалог');
+  });
+
   it('не пишет «показываю», когда влезли все', () => {
     const out = formatOutreachList({ leads: [lead({})], total: 1 });
 
