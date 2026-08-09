@@ -1,9 +1,12 @@
 {
   "name": "teach-track-leadgen",
   "version": "0.1.0",
-  "description": "Сбор лидов из телеграм-чатов преподавателей через userbot-аккаунт",
-  "private": true,
-  "license": "UNLICENSED",
+  "description": "Сбор лидов из телеграм-чатов через userbot-аккаунт: читает открытые чаты, вылавливает тех, кто рекламирует свои услуги, складывает уникальным списком",
+  "license": "MIT",
+  "author": "Nikita Shevelev (OneZee)",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.ts\"",
@@ -11,6 +14,7 @@
     "start:dev": "NODE_ENV=development nest start --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,scripts}/**/*.ts\" --fix",
+    "lint:ci": "eslint \"{src,scripts}/**/*.ts\"",
     "test": "jest",
     "refresh": "curl -sS -XPOST 'http://127.0.0.1:3010/outreach/refresh?limit=30'",
     "leads": "curl -sS 'http://127.0.0.1:3010/outreach/next?limit=30'",

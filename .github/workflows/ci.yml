@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - run: yarn install --frozen-lockfile
+
+      - run: yarn build
+
+      # Тесты не ходят ни в базу, ни в Telegram: репозитории и MTProto-клиент
+      # подменяются заглушками, поэтому CI не нужны ни секреты, ни сервисы.
+      - run: yarn test
+
+      # Отдельный скрипт без --fix: в CI линтер должен падать на замечаниях,
+      # а не молча их править.
+      - run: yarn lint:ci

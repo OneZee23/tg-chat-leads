@@ -244,7 +244,7 @@ export class LeadService {
   /**
    * Ручная пометка по никам — чтобы не выковыривать uuid из выдачи.
    * Ник сравниваем в нижнем регистре: в Telegram он регистронезависим,
-   * и «@example_tutor» из списка должен находиться как «@konstantsiia».
+   * и «@ExampleTutor» из списка должен находиться как «@exampletutor».
    */
   public async markByUsernames(usernames: string[], status: LeadStatus): Promise<number> {
     const normalized = usernames
