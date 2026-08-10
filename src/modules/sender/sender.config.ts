@@ -78,4 +78,22 @@ export class SenderConfig extends ConfigFragment {
   @IsBoolean()
   @UseEnv('SEND_SCHEDULE_AUTOSTART', parseBool)
   public readonly scheduleAutostart: boolean;
+
+  /**
+   * Персонализированный режим: каждому — своя первая строка про его предмет
+   * плюс тело из body.md. Вместо одинаковой простыни из text.md.
+   * Мягче и реже читается как спам.
+   */
+  @IsBoolean()
+  @UseEnv('SEND_PERSONALIZED', parseBool)
+  public readonly personalized: boolean;
+
+  /**
+   * Слать ли картинки в персонализированном режиме. По умолчанию нет:
+   * короткое личное сообщение без семи скриншотов и есть «мягко, не
+   * назойливо». Картинки уместнее дослать, когда человек ответит.
+   */
+  @IsBoolean()
+  @UseEnv('SEND_PERSONALIZED_IMAGES', parseBool)
+  public readonly personalizedImages: boolean;
 }

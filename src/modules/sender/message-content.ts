@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join } from 'node:path';
+import { DEFAULT_BODY } from '@modules/sender/outreach-message';
 
 /**
  * Содержимое рассылки лежит на диске, а не в коде: текст правится без
@@ -15,6 +16,16 @@ export interface MessageContent {
   images: string[];
   /** Подпись к альбому не может быть длиннее лимита Telegram. */
   captionFits: boolean;
+  /**
+   * Тело для персонализированного режима (без приветствия — хук ставит
+   * своё). Берётся из body.md; если файла нет — из DEFAULT_BODY.
+   */
+  body: string;
+}
+
+/** Максимальная длина подписи к альбому (Telegram режет на 1024). */
+export function captionFits(text: string): boolean {
+  return text.length <= CAPTION_LIMIT;
 }
 
 // Telegram режет подпись к медиа на 1024 символах. Берём с запасом:
@@ -35,7 +46,18 @@ export function loadMessageContent(dir: string): MessageContent {
     text,
     images: listImages(join(dir, 'images')),
     captionFits: text.length <= CAPTION_LIMIT,
+    body: loadBody(dir),
   };
+}
+
+/** Тело для персонализированного режима: body.md или дефолт из кода. */
+function loadBody(dir: string): string {
+  try {
+    const body = readFileSync(join(dir, 'body.md'), 'utf8').trim();
+    return body.length > 0 ? body : DEFAULT_BODY;
+  } catch {
+    return DEFAULT_BODY;
+  }
 }
 
 function listImages(dir: string): string[] {

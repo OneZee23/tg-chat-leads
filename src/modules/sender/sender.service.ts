@@ -4,7 +4,12 @@ import { sleepJitter } from '@common/utils/sleep';
 import { AccountService } from '@modules/account/account.service';
 import { LeadEntity } from '@modules/lead/lead.entity';
 import { LeadService } from '@modules/lead/lead.service';
-import { loadMessageContent, MessageContent } from '@modules/sender/message-content';
+import {
+  captionFits,
+  loadMessageContent,
+  MessageContent,
+} from '@modules/sender/message-content';
+import { buildOutreachMessage } from '@modules/sender/outreach-message';
 import { SendAttemptService } from '@modules/sender/send-attempt.service';
 import { SenderConfig } from '@modules/sender/sender.config';
 import { TelegramClientService } from '@modules/telegram/telegram-client.service';
@@ -258,8 +263,16 @@ export class SenderService {
     // проверить диалог руками, а не гадать.
     const attemptId = await this.attempts.start(lead);
 
+    // Персонализированный режим: своя первая строка про предмет человека +
+    // тело из body.md, картинки по флагу. Иначе — общий text.md как есть.
+    const message = this.config.personalized
+      ? buildOutreachMessage(lead.sampleText, content.body)
+      : content.text;
+    const images =
+      this.config.personalized && !this.config.personalizedImages ? [] : content.images;
+
     try {
-      await this.sendTo(lead, content);
+      await this.sendTo(lead, message, images);
     } catch (err) {
       if (err instanceof PartialDeliveryError) {
         // Картинки человек уже видит. Помечаем отправленным, чтобы не
@@ -311,26 +324,26 @@ export class SenderService {
     }
   }
 
-  private async sendTo(lead: LeadEntity, content: MessageContent): Promise<void> {
+  private async sendTo(lead: LeadEntity, text: string, images: string[]): Promise<void> {
     const client = this.telegram.getClient();
     const peer = await client.getEntity(`@${lead.username}`);
 
-    if (content.images.length === 0) {
-      await client.sendMessage(peer, { message: content.text });
+    if (images.length === 0) {
+      await client.sendMessage(peer, { message: text });
       return;
     }
 
-    if (content.captionFits) {
-      await client.sendFile(peer, { file: content.images, caption: content.text });
+    if (captionFits(text)) {
+      await client.sendFile(peer, { file: images, caption: text });
       return;
     }
 
     // Текст не влезает в подпись — шлём альбом, следом текст. Порядок
     // такой, чтобы человек сначала увидел скриншоты: без них длинная
     // простыня читается как реклама.
-    await client.sendFile(peer, { file: content.images });
+    await client.sendFile(peer, { file: images });
     try {
-      await client.sendMessage(peer, { message: content.text });
+      await client.sendMessage(peer, { message: text });
     } catch (err) {
       throw new PartialDeliveryError(err);
     }
