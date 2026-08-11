@@ -66,7 +66,7 @@ export class OutreachService {
     const stat = await this.dialogs.recountReplies();
     const head =
       `\nПересчёт: проверено ${stat.checked}, ответивших ${stat.replied}` +
-      (stat.skippedNoUsername ? `, без ника пропущено ${stat.skippedNoUsername}` : '') +
+      (stat.deepReads ? ` (глубоких чтений ${stat.deepReads})` : '') +
       '\n';
     return head + (await this.replies());
   }

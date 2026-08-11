@@ -197,51 +197,70 @@ export class DialogsService {
   public async recountReplies(): Promise<{
     checked: number;
     replied: number;
-    skippedNoUsername: number;
+    deepReads: number;
   }> {
     const client = this.telegram.getClient();
     const contacted = await this.leads.getContactedForRecount();
-    const result = { checked: 0, replied: 0, skippedNoUsername: 0 };
+    // id → когда мы писали. Идём по диалогам, а НЕ по никам: getEntity('@ник')
+    // делает contacts.ResolveUsername на каждого, а Telegram его жёстко
+    // лимитирует — на трёх сотнях это FloodWait по 3-4 секунды каждый.
+    // iterDialogs отдаёт уже разрезолвленные сущности за один проход.
+    const sentById = new Map(contacted.map((c) => [c.tgUserId, c.contactedAt]));
+    const result = { checked: 0, replied: 0, deepReads: 0 };
 
-    for (const lead of contacted) {
-      if (!lead.username) {
-        result.skippedNoUsername += 1;
-        continue;
-      }
+    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+      if (!dialog.isUser) continue;
+      const entity = dialog.entity;
+      if (!(entity instanceof Api.User)) continue;
 
-      try {
-        const peer = await client.getEntity(`@${lead.username}`);
-        const messages = await client.getMessages(peer, { limit: this.config.deepLimit });
+      const id = entity.id.toString();
+      if (!sentById.has(id)) continue;
 
-        const sentAt = lead.contactedAt ? lead.contactedAt.getTime() : 0;
-        // Сообщения приходят от новых к старым — первое входящее с датой
-        // позже нашего письма и есть последний ответ.
-        const reply = messages.find(
-          (m: Api.Message) =>
-            m.out === false &&
-            (m.message ?? '').trim().length > 0 &&
-            m.date * 1000 > sentAt,
-        );
+      result.checked += 1;
+      const sent = sentById.get(id);
+      const sentAt = sent ? sent.getTime() : 0;
+      const last = dialog.message;
 
-        result.checked += 1;
-        if (reply) {
-          await this.leads.recordReply(
-            lead.tgUserId,
-            reply.message,
-            new Date(reply.date * 1000),
+      let reply: Api.Message | undefined;
+
+      if (
+        last &&
+        last.out === false &&
+        (last.message ?? '').trim() &&
+        last.date * 1000 > sentAt
+      ) {
+        // Последнее сообщение — их ответ, текст уже на руках, лишний запрос
+        // не нужен.
+        reply = last;
+      } else if (last && last.out === true) {
+        // Мы ответили последними — ответ человека выше по истории. Читаем её,
+        // но getMessages по готовой сущности НЕ дёргает ResolveUsername.
+        try {
+          const messages = await client.getMessages(entity, {
+            limit: this.config.deepLimit,
+          });
+          reply = messages.find(
+            (m: Api.Message) =>
+              m.out === false &&
+              (m.message ?? '').trim().length > 0 &&
+              m.date * 1000 > sentAt,
           );
-          result.replied += 1;
+          result.deepReads += 1;
+          await sleep(this.config.deepDelayMs);
+        } catch (err) {
+          this.logger.warn(`Пересчёт: id${id} — ${describeError(err)}`);
         }
-      } catch (err) {
-        this.logger.warn(`Пересчёт: @${lead.username} — ${describeError(err)}`);
       }
 
-      await sleep(this.config.deepDelayMs);
+      if (reply) {
+        await this.leads.recordReply(id, reply.message, new Date(reply.date * 1000));
+        result.replied += 1;
+      }
     }
 
     this.logger.log(
       `Пересчёт ответов: проверено ${result.checked}, ответили ${result.replied}, ` +
-        `без ника пропущено ${result.skippedNoUsername}`,
+        `глубоких чтений ${result.deepReads}`,
     );
     return result;
   }
