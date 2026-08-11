@@ -46,6 +46,24 @@ export class OutreachController {
   }
 
   /**
+   * Полный пересчёт ответов по истории диалогов + worklist: `yarn recount`.
+   * Дорого (запрос к Telegram на каждого, кому писали) — запускать по мере
+   * надобности, а не каждый раз.
+   */
+  @Post('recount-replies')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public recountReplies(): Promise<string> {
+    return this.outreach.recountAndListReplies();
+  }
+
+  /** Worklist ответивших из базы, без Telegram: `yarn replies`. */
+  @Get('replies')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public replies(): Promise<string> {
+    return this.outreach.replies();
+  }
+
+  /**
    * Ручная пометка по никам:
    *   curl -s -XPOST 'http://127.0.0.1:3010/outreach/mark?status=skip&usernames=@a,@b'
    */

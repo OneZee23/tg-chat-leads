@@ -469,6 +469,55 @@ export class LeadService {
     return affected ?? 0;
   }
 
+  /** Все, кому писали: id → момент отправки. Для полного пересчёта ответов. */
+  public async getContactedForRecount(): Promise<
+    Array<{ tgUserId: string; username: string | null; contactedAt: Date | null }>
+  > {
+    const rows: Array<{
+      tg_user_id: string;
+      username: string | null;
+      contacted_at: Date | null;
+    }> = await this.repo.query(
+      `SELECT tg_user_id, username, contacted_at FROM tg_lead WHERE contacted_at IS NOT NULL`,
+    );
+    return rows.map((r) => ({
+      tgUserId: String(r.tg_user_id),
+      username: r.username,
+      contactedAt: r.contacted_at,
+    }));
+  }
+
+  /**
+   * Отметить ответ с текстом. Статус двигаем в `replied` только из
+   * `contacted` — руками проставленные skip/registered/rejected не трогаем.
+   * Текст и дату ответа обновляем всегда, чтобы worklist показывал свежее.
+   */
+  public async recordReply(
+    tgUserId: string,
+    text: string,
+    repliedAt: Date,
+  ): Promise<void> {
+    await this.repo.query(
+      `
+      UPDATE tg_lead
+      SET reply_text = $2,
+          replied_at = $3,
+          status     = CASE WHEN status = 'contacted' THEN 'replied' ELSE status END,
+          updated_at = now()
+      WHERE tg_user_id = $1
+      `,
+      [tgUserId, text, repliedAt],
+    );
+  }
+
+  /** Ответившие, кого ещё не разобрал: свежие сверху. */
+  public async getRepliesWorklist(): Promise<LeadEntity[]> {
+    return this.repo.find({
+      where: { status: 'replied' },
+      order: { repliedAt: 'DESC' },
+    });
+  }
+
   /**
    * Сводка по аутричу: написано / ответили.
    *

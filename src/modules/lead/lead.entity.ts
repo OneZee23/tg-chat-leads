@@ -106,6 +106,14 @@ export class LeadEntity {
   @Column({ name: 'contacted_at', type: 'timestamptz', nullable: true })
   public contactedAt: Date | null;
 
+  // Текст последнего входящего сообщения человека после нашего письма —
+  // его ответ. Заполняется полным пересчётом (recount-replies).
+  @Column({ name: 'reply_text', type: 'text', nullable: true })
+  public replyText: string | null;
+
+  @Column({ name: 'replied_at', type: 'timestamptz', nullable: true })
+  public repliedAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   public readonly createdAt: Date;
 

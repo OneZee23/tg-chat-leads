@@ -7,6 +7,7 @@ import {
   formatOutreachList,
   formatRefreshSummary,
 } from '@modules/outreach/outreach.format';
+import { formatRepliesWorklist } from '@modules/outreach/replies.format';
 
 /**
  * Один сценарий на каждый день, чтобы не помнить три ручки и их порядок.
@@ -58,6 +59,21 @@ export class OutreachService {
   public async next(limit: number): Promise<string> {
     const { total, items } = await this.leads.findForOutreach(limit);
     return formatOutreachList({ leads: items, total });
+  }
+
+  /** Полный пересчёт ответов по истории диалогов + worklist. */
+  public async recountAndListReplies(): Promise<string> {
+    const stat = await this.dialogs.recountReplies();
+    const head =
+      `\nПересчёт: проверено ${stat.checked}, ответивших ${stat.replied}` +
+      (stat.skippedNoUsername ? `, без ника пропущено ${stat.skippedNoUsername}` : '') +
+      '\n';
+    return head + (await this.replies());
+  }
+
+  /** Worklist ответивших без похода в Telegram — из базы. */
+  public async replies(): Promise<string> {
+    return formatRepliesWorklist(await this.leads.getRepliesWorklist());
   }
 
   public async mark(usernames: string[], status: LeadStatus): Promise<string> {

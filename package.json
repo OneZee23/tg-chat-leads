@@ -18,6 +18,8 @@
     "test": "jest",
     "refresh": "curl -sS -XPOST 'http://127.0.0.1:3010/outreach/refresh?limit=30'",
     "leads": "curl -sS 'http://127.0.0.1:3010/outreach/next?limit=30'",
+    "replies": "curl -sS 'http://127.0.0.1:3010/outreach/replies'",
+    "recount": "curl -sS --max-time 900 -XPOST 'http://127.0.0.1:3010/outreach/recount-replies'",
     "wrote": "sh scripts/mark.sh contacted",
     "skip": "sh scripts/mark.sh skip",
     "chats": "curl -sS 'http://127.0.0.1:3010/chats?withCounts=true'",

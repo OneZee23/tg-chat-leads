@@ -179,6 +179,74 @@ export class DialogsService {
   }
 
   /**
+   * Полный пересчёт ответов.
+   *
+   * Быстрая сверка в syncContacted ловит ответ только когда наше последнее
+   * сообщение НЕ последнее в диалоге. Но ты активно отвечаешь людям, и тогда
+   * последнее сообщение — твоё, а ответ человека остаётся выше по истории и
+   * из подсчёта выпадает. Отсюда «7 ответивших» при том, что реально их
+   * больше.
+   *
+   * Здесь читаем историю каждого диалога, где мы писали, и ищем самое свежее
+   * ВХОДЯЩЕЕ сообщение позже нашего письма — это и есть ответ. Его текст
+   * складываем в базу, чтобы worklist показывал его без повторного чтения.
+   *
+   * Дорого (запрос к Telegram на каждого, кому писали), поэтому это отдельная
+   * ручная операция, а не часть refresh.
+   */
+  public async recountReplies(): Promise<{
+    checked: number;
+    replied: number;
+    skippedNoUsername: number;
+  }> {
+    const client = this.telegram.getClient();
+    const contacted = await this.leads.getContactedForRecount();
+    const result = { checked: 0, replied: 0, skippedNoUsername: 0 };
+
+    for (const lead of contacted) {
+      if (!lead.username) {
+        result.skippedNoUsername += 1;
+        continue;
+      }
+
+      try {
+        const peer = await client.getEntity(`@${lead.username}`);
+        const messages = await client.getMessages(peer, { limit: this.config.deepLimit });
+
+        const sentAt = lead.contactedAt ? lead.contactedAt.getTime() : 0;
+        // Сообщения приходят от новых к старым — первое входящее с датой
+        // позже нашего письма и есть последний ответ.
+        const reply = messages.find(
+          (m: Api.Message) =>
+            m.out === false &&
+            (m.message ?? '').trim().length > 0 &&
+            m.date * 1000 > sentAt,
+        );
+
+        result.checked += 1;
+        if (reply) {
+          await this.leads.recordReply(
+            lead.tgUserId,
+            reply.message,
+            new Date(reply.date * 1000),
+          );
+          result.replied += 1;
+        }
+      } catch (err) {
+        this.logger.warn(`Пересчёт: @${lead.username} — ${describeError(err)}`);
+      }
+
+      await sleep(this.config.deepDelayMs);
+    }
+
+    this.logger.log(
+      `Пересчёт ответов: проверено ${result.checked}, ответили ${result.replied}, ` +
+        `без ника пропущено ${result.skippedNoUsername}`,
+    );
+    return result;
+  }
+
+  /**
    * Есть ли в переписке хоть одно моё сообщение.
    *
    * Берём обычную историю, а не серверный фильтр `fromUser: 'me'`: в личных
@@ -233,4 +301,8 @@ function resolveType(entity: Api.Chat | Api.Channel): DiscoveredChat['type'] {
   if (entity instanceof Api.Chat) return 'group';
   if (entity.broadcast) return 'channel';
   return 'supergroup';
+}
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
