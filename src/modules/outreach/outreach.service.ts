@@ -8,6 +8,7 @@ import {
   formatRefreshSummary,
 } from '@modules/outreach/outreach.format';
 import { formatRepliesWorklist } from '@modules/outreach/replies.format';
+import { FloodWaitTracker } from '@modules/telegram/flood-wait.tracker';
 
 /**
  * Один сценарий на каждый день, чтобы не помнить три ручки и их порядок.
@@ -30,6 +31,7 @@ export class OutreachService {
     private readonly scanner: ScannerService,
     private readonly dialogs: DialogsService,
     private readonly leads: LeadService,
+    private readonly flood: FloodWaitTracker,
   ) {}
 
   public async refresh(limit: number): Promise<string> {
@@ -64,10 +66,15 @@ export class OutreachService {
   /** Полный пересчёт ответов по истории диалогов + worklist. */
   public async recountAndListReplies(): Promise<string> {
     const stat = await this.dialogs.recountReplies();
+    const active = this.flood.active();
+    const floodLine = active.length
+      ? `\n⚠ Лимиты Telegram: ${this.flood.summary()}\n`
+      : '';
     const head =
       `\nПересчёт: проверено ${stat.checked}, ответивших ${stat.replied}` +
       (stat.deepReads ? ` (глубоких чтений ${stat.deepReads})` : '') +
-      '\n';
+      '\n' +
+      floodLine;
     return head + (await this.replies());
   }
 

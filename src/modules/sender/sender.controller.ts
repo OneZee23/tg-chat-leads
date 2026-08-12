@@ -6,6 +6,7 @@ import { SendAttemptService } from '@modules/sender/send-attempt.service';
 import { SendSchedulerService } from '@modules/sender/send-scheduler.service';
 import { SenderConfig } from '@modules/sender/sender.config';
 import { SenderService } from '@modules/sender/sender.service';
+import { FloodWaitTracker } from '@modules/telegram/flood-wait.tracker';
 
 class RunSendDto {
   @IsOptional()
@@ -33,6 +34,7 @@ export class SenderController {
     private readonly attempts: SendAttemptService,
     private readonly leads: LeadService,
     private readonly config: SenderConfig,
+    private readonly flood: FloodWaitTracker,
   ) {}
 
   /**
@@ -65,6 +67,9 @@ export class SenderController {
       dryRun: this.config.dryRun,
       dailyBudget: budget,
       scheduler: this.scheduler.status(),
+      // Активные ограничения Telegram: до какого времени и что именно зажато.
+      floodLimits: this.flood.active(),
+      floodSummary: this.flood.summary(),
       // Отправка началась, исход неизвестен. Такие надо разобрать руками:
       // открыть диалог и посмотреть, ушло сообщение или нет.
       unfinishedAttempts: unfinished,

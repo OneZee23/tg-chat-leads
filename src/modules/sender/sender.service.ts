@@ -12,6 +12,7 @@ import {
 import { buildOutreachMessage } from '@modules/sender/outreach-message';
 import { SendAttemptService } from '@modules/sender/send-attempt.service';
 import { SenderConfig } from '@modules/sender/sender.config';
+import { FloodWaitTracker } from '@modules/telegram/flood-wait.tracker';
 import { TelegramClientService } from '@modules/telegram/telegram-client.service';
 
 export interface SendReport {
@@ -65,6 +66,7 @@ export class SenderService {
     private readonly leads: LeadService,
     private readonly attempts: SendAttemptService,
     private readonly account: AccountService,
+    private readonly flood: FloodWaitTracker,
   ) {}
 
   public isRunning(): boolean {
@@ -237,6 +239,17 @@ export class SenderService {
     if (remaining <= 0) {
       return {
         reason: `суточный бюджет исчерпан (${this.config.maxPerDay} за 24 часа)`,
+        fatal: false,
+      };
+    }
+
+    // Отправка каждого сообщения начинается с getEntity('@ник') —
+    // это contacts.ResolveUsername. Если на нём висит FloodWait, все 30
+    // писем упрутся в него по очереди. Проверяем один раз и не долбим.
+    const resolveLimit = this.flood.forMethod('contacts.ResolveUsername');
+    if (resolveLimit) {
+      return {
+        reason: `резолв @ников заблокирован ещё ${resolveLimit.human} — отправка невозможна`,
         fatal: false,
       };
     }

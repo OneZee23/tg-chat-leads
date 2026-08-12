@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { FloodWaitTracker } from '@modules/telegram/flood-wait.tracker';
 import { TelegramConfig } from '@modules/telegram/telegram.config';
 import { Api, TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions';
@@ -20,7 +21,10 @@ export class TelegramClientService implements OnModuleInit, OnModuleDestroy {
 
   private me: Api.User | null = null;
 
-  constructor(private readonly config: TelegramConfig) {}
+  constructor(
+    private readonly config: TelegramConfig,
+    private readonly floodTracker: FloodWaitTracker,
+  ) {}
 
   public async onModuleInit(): Promise<void> {
     const client = new TelegramClient(
@@ -37,6 +41,8 @@ export class TelegramClientService implements OnModuleInit, OnModuleDestroy {
         baseLogger: undefined,
       },
     );
+
+    this.wrapInvoke(client);
 
     await client.connect();
 
@@ -86,6 +92,25 @@ export class TelegramClientService implements OnModuleInit, OnModuleDestroy {
 
   public getMyId(): string | null {
     return this.me ? this.me.id.toString() : null;
+  }
+
+  /**
+   * Единая точка перехвата FloodWait. Все запросы GramJS проходят через
+   * client.invoke, поэтому оборачиваем именно его: любой лимит попадает в
+   * трекер, не трогая десятки мест, где мы ловим ошибки. Короткие FloodWait,
+   * которые GramJS пересиживает сам (ниже floodSleepThreshold), сюда как
+   * исключение не долетают — и хорошо, их учитывать не нужно.
+   */
+  private wrapInvoke(client: TelegramClient): void {
+    const original = client.invoke.bind(client);
+    (client as unknown as { invoke: typeof client.invoke }).invoke = async (request) => {
+      try {
+        return await original(request);
+      } catch (err) {
+        this.floodTracker.record(err);
+        throw err;
+      }
+    };
   }
 }
 
