@@ -19,6 +19,7 @@ export/
 .vscode/
 
 # Содержимое рассылки — твой личный текст и скриншоты. У каждого своё.
-# В репозитории лежит только пример: posts/cold-outreach/text.example.md
+# В репозитории лежат только примеры: text.example.md / body.example.md
 posts/cold-outreach/text.md
+posts/cold-outreach/body.md
 posts/cold-outreach/images/
