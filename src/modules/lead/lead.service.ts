@@ -519,6 +519,33 @@ export class LeadService {
   }
 
   /**
+   * Кандидаты на авто-ответ: кому мы писали (contacted_at есть) и кто ещё
+   * не в терминальном статусе. tgUserId → момент нашего письма.
+   *
+   * Берём и `contacted`, и `replied`: авто-ответ сам разберёт по диалогу,
+   * ответил человек или нет (последнее сообщение — его), не полагаясь на то,
+   * прогонялся ли перед этим recount. Уже отвеченных (`answered`) и
+   * руками закрытых (skip/registered/rejected) не трогаем.
+   */
+  public async getAutoReplyCandidates(): Promise<Map<string, Date | null>> {
+    const rows: Array<{ tg_user_id: string; contacted_at: Date | null }> =
+      await this.repo.query(
+        `SELECT tg_user_id, contacted_at FROM tg_lead
+         WHERE contacted_at IS NOT NULL
+           AND status IN ('contacted', 'replied')`,
+      );
+    return new Map(rows.map((r) => [String(r.tg_user_id), r.contacted_at]));
+  }
+
+  /** Мы ответили человеку (шаблоном или руками): → answered. */
+  public async markAnswered(tgUserId: string): Promise<void> {
+    await this.repo.query(
+      `UPDATE tg_lead SET status = 'answered', updated_at = now() WHERE tg_user_id = $1`,
+      [tgUserId],
+    );
+  }
+
+  /**
    * Сводка по аутричу: написано / ответили.
    *
    * Знаменатель считаем по `contacted_at`, а не по набору статусов: человек,

@@ -1,4 +1,8 @@
-import { classifyReply, suggestReply } from '@modules/outreach/reply-draft';
+import {
+  autoReplyTemplate,
+  classifyReply,
+  suggestReply,
+} from '@modules/outreach/reply-draft';
 
 describe('classifyReply', () => {
   it('распознаёт отказ даже с «спасибо» внутри', () => {
@@ -19,6 +23,13 @@ describe('classifyReply', () => {
     );
     expect(classifyReply('Хорошо, я обязательно посмотрю')).toBe('positive');
     expect(classifyReply('Да хочу')).toBe('positive');
+    // «Опробую» — без стема «пробу» не распознавалось.
+    expect(classifyReply('Опробую')).toBe('positive');
+    expect(classifyReply('я бы попробовала')).toBe('positive');
+  });
+
+  it('«не подходит» — это отказ', () => {
+    expect(classifyReply('спасибо, мне не подходит')).toBe('decline');
   });
 
   it('нейтральное — когда ни отказа, ни вопроса, ни явного интереса', () => {
@@ -57,5 +68,30 @@ describe('suggestReply', () => {
   it('на нейтральное — лёгкое касание со ссылкой', () => {
     const s = suggestReply('Здравствуйте');
     expect(s.draft).toContain('teachtrack.ru');
+  });
+});
+
+describe('autoReplyTemplate', () => {
+  it('позитив → «рад что заинтересовало»', () => {
+    const r = autoReplyTemplate('Опробую, спасибо');
+    expect(r.kind).toBe('positive');
+    expect(r.text).toContain('рад что заинтересовало');
+  });
+
+  it('отказ → «спасибо, что в любом случае ответили»', () => {
+    const r = autoReplyTemplate('Спасибо, не интересует данная информация');
+    expect(r.kind).toBe('decline');
+    expect(r.text).toContain('в любом случае ответили');
+  });
+
+  it('вопрос → авто-ответа НЕТ (руками)', () => {
+    // Критично: на вопрос про фичу шаблон соврёт.
+    expect(autoReplyTemplate('А как туда зайти?').text).toBeNull();
+    expect(autoReplyTemplate('это актуально ещё?').text).toBeNull();
+  });
+
+  it('нейтральное → авто-ответа НЕТ (руками)', () => {
+    expect(autoReplyTemplate('Здравствуйте, я посредник, передам').text).toBeNull();
+    expect(autoReplyTemplate('но я только начал').text).toBeNull();
   });
 });

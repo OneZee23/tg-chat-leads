@@ -48,6 +48,49 @@ export function formatRepliesWorklist(leads: LeadEntity[]): string {
   return lines.join('\n');
 }
 
+export function formatAutoReplyResult(result: {
+  dryRun: boolean;
+  sent: number;
+  skippedManual: number;
+  stoppedBecause: string;
+  entries: Array<{
+    username: string | null;
+    kind: string;
+    reply: string;
+    result: string;
+  }>;
+}): string {
+  const head = result.dryRun
+    ? 'ПРЕДПРОСМОТР (ничего не отправлено)'
+    : 'Авто-ответ отправлен';
+  const lines: string[] = ['', head, ''];
+
+  if (result.entries.length === 0) {
+    lines.push('Некому: нет неотвеченных ответов с однозначным позитивом/отказом.');
+    lines.push(`На ручной разбор (вопросы, нейтральное): ${result.skippedManual}`);
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  result.entries.forEach((e, i) => {
+    const nick = e.username ? `@${e.username}` : '(без ника)';
+    const verb = result.dryRun ? 'уйдёт' : e.result === 'sent' ? 'ушло' : e.result;
+    lines.push(`${String(i + 1).padStart(2, ' ')}. ${nick}  ·  ${e.kind}  ·  ${verb}`);
+    lines.push(`    он: ${e.reply}`);
+  });
+
+  lines.push('');
+  lines.push(`${result.dryRun ? 'Ушло бы' : 'Отправлено'}: ${result.sent}`);
+  lines.push(`На ручной разбор (вопросы, нейтральное): ${result.skippedManual}`);
+  lines.push(`Остановка: ${result.stoppedBecause}`);
+  if (result.dryRun) {
+    lines.push('');
+    lines.push('Если всё верно — отправить по-настоящему: yarn autoreply:send');
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
 function oneLine(text: string | null): string {
   const clean = (text ?? '').replace(/\s+/g, ' ').trim();
   if (clean.length === 0) return '—';

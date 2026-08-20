@@ -1,6 +1,15 @@
 import { Controller, Get, Header, Post, Query } from '@nestjs/common';
-import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { LEAD_STATUSES, LeadStatus } from '@modules/lead/lead.entity';
 import { OutreachService } from '@modules/outreach/outreach.service';
 
@@ -21,6 +30,25 @@ class MarkQueryDto {
   @IsOptional()
   @IsIn(LEAD_STATUSES as unknown as string[])
   public readonly status?: LeadStatus;
+}
+
+class AutoReplyQueryDto {
+  /** Реально слать. По умолчанию false — сначала предпросмотр. */
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string'
+      ? ['true', '1', 'yes'].includes(value.toLowerCase())
+      : value,
+  )
+  @IsBoolean()
+  public readonly send?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  public readonly limit?: number;
 }
 
 /**
@@ -61,6 +89,17 @@ export class OutreachController {
   @Header('Content-Type', 'text/plain; charset=utf-8')
   public replies(): Promise<string> {
     return this.outreach.replies();
+  }
+
+  /**
+   * Авто-ответ шаблоном тем, кто ответил и кому ты ещё не отвечал.
+   * Без `send=true` — только предпросмотр (`yarn autoreply`).
+   * С `send=true` — реально отправляет (`yarn autoreply:send`).
+   */
+  @Post('auto-reply')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public autoReply(@Query() query: AutoReplyQueryDto): Promise<string> {
+    return this.outreach.autoReply(query.send !== true, query.limit ?? 40);
   }
 
   /**

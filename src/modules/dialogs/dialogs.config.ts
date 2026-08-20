@@ -36,4 +36,20 @@ export class DialogsConfig extends ConfigFragment {
   @Min(1)
   @UseEnv('CONTACTED_DEEP_LIMIT', parseIntWithDefault(50))
   public readonly deepLimit: number;
+
+  /**
+   * Пауза между авто-ответами, секунды. Отвечаем тем, кто сам написал, —
+   * это обычный диалог, а не рассылка, поэтому риск ниже и пауза меньше.
+   * Но совсем без паузы 40 сообщений подряд всё равно похожи на бота.
+   */
+  @IsInt()
+  @Min(1)
+  @UseEnv('AUTO_REPLY_DELAY_SEC', parseIntWithDefault(5))
+  public readonly autoReplyDelaySec: number;
+
+  /** Потолок авто-ответов за один запуск. */
+  @IsInt()
+  @Min(1)
+  @UseEnv('AUTO_REPLY_MAX', parseIntWithDefault(40))
+  public readonly autoReplyMax: number;
 }

@@ -3,8 +3,29 @@ import { Api } from 'telegram';
 import { sleep } from '@common/utils/sleep';
 import { DialogsConfig } from '@modules/dialogs/dialogs.config';
 import { LeadService } from '@modules/lead/lead.service';
+import { autoReplyTemplate } from '@modules/outreach/reply-draft';
+import { ReplyKind } from '@modules/outreach/reply-draft';
 import { ScannerConfig } from '@modules/scanner/scanner.config';
 import { TelegramClientService } from '@modules/telegram/telegram-client.service';
+
+export interface AutoReplyEntry {
+  username: string | null;
+  tgUserId: string;
+  kind: ReplyKind;
+  reply: string;
+  result: 'preview' | 'sent' | 'failed';
+  error?: string;
+}
+
+export interface AutoReplyResult {
+  dryRun: boolean;
+  /** Отправлено (или «ушло бы» в dry-run). */
+  sent: number;
+  /** Пропущено на ручной разбор (вопрос/нейтральное). */
+  skippedManual: number;
+  stoppedBecause: string;
+  entries: AutoReplyEntry[];
+}
 
 export interface DiscoveredChat {
   /** Готовая строка для SCAN_CHATS. */
@@ -261,6 +282,103 @@ export class DialogsService {
     this.logger.log(
       `Пересчёт ответов: проверено ${result.checked}, ответили ${result.replied}, ` +
         `глубоких чтений ${result.deepReads}`,
+    );
+    return result;
+  }
+
+  /**
+   * Авто-ответ шаблоном тем, кто написал и кому мы ещё НЕ отвечали.
+   *
+   * Безопаснее рассылки по двум причинам:
+   *  • отвечаем тем, кто сам нам написал, — это обычный диалог, а не письмо
+   *    незнакомцу, поэтому PEER_FLOOD не грозит;
+   *  • шлём по сущности из iterDialogs — без contacts.ResolveUsername,
+   *    который и ловил многочасовые лимиты на рассылке.
+   *
+   * «Ещё не отвечали» определяем по состоянию диалога В МОМЕНТ отправки:
+   * последнее сообщение — их (входящее) и оно позже нашего письма. Если ты
+   * уже ответил руками, последним будет твоё, и человек сюда не попадёт.
+   * Плюс после отправки статус → answered, второй guard от повтора.
+   *
+   * Шаблон уходит только на однозначные позитив/отказ; вопрос и нейтральное
+   * пропускаем — их надо разобрать руками (см. autoReplyTemplate).
+   */
+  public async autoReplyUnanswered(options: {
+    dryRun: boolean;
+    limit: number;
+  }): Promise<AutoReplyResult> {
+    const client = this.telegram.getClient();
+    const candidates = await this.leads.getAutoReplyCandidates();
+    const cap = Math.min(options.limit, this.config.autoReplyMax);
+    const result: AutoReplyResult = {
+      dryRun: options.dryRun,
+      sent: 0,
+      skippedManual: 0,
+      stoppedBecause: 'кандидаты закончились',
+      entries: [],
+    };
+
+    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+      if (result.sent >= cap) {
+        result.stoppedBecause = `упёрлись в лимит (${cap})`;
+        break;
+      }
+      if (!dialog.isUser) continue;
+      const entity = dialog.entity;
+      if (!(entity instanceof Api.User)) continue;
+
+      const id = entity.id.toString();
+      const sentAt = candidates.get(id);
+      if (sentAt === undefined) continue;
+
+      // Последнее сообщение должно быть ИХ (входящее) и позже нашего письма —
+      // тогда это неотвеченный ответ. Если последнее наше, значит мы уже
+      // ответили, пропускаем.
+      const last = dialog.message;
+      if (!last || last.out !== false) continue;
+      if ((last.message ?? '').trim().length === 0) continue;
+      if (sentAt && last.date * 1000 <= sentAt.getTime()) continue;
+
+      const template = autoReplyTemplate(last.message);
+      if (!template.text) {
+        result.skippedManual += 1;
+        continue;
+      }
+
+      const entry = {
+        username: entity.username ?? null,
+        tgUserId: id,
+        kind: template.kind,
+        reply: last.message.replace(/\s+/g, ' ').trim().slice(0, 120),
+      };
+
+      if (options.dryRun) {
+        result.entries.push({ ...entry, result: 'preview' });
+        result.sent += 1; // в dry-run считаем «сколько бы ушло»
+        continue;
+      }
+
+      try {
+        await client.sendMessage(entity, { message: template.text });
+        await this.leads.markAnswered(id);
+        result.entries.push({ ...entry, result: 'sent' });
+        result.sent += 1;
+        await sleep(this.config.autoReplyDelaySec * 1000);
+      } catch (err) {
+        // Ошибка на отправке (в т.ч. FloodWait — он уже записан трекером
+        // через обёртку invoke) останавливает проход: сыпать дальше при
+        // проблеме нельзя.
+        const message = describeError(err);
+        result.entries.push({ ...entry, result: 'failed', error: message });
+        result.stoppedBecause = `ошибка отправки: ${message}`;
+        break;
+      }
+    }
+
+    this.logger.log(
+      `Авто-ответ (${options.dryRun ? 'preview' : 'боевой'}): ` +
+        `${options.dryRun ? 'кандидатов' : 'отправлено'} ${result.sent}, ` +
+        `на разбор руками ${result.skippedManual}`,
     );
     return result;
   }

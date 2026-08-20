@@ -7,7 +7,10 @@ import {
   formatOutreachList,
   formatRefreshSummary,
 } from '@modules/outreach/outreach.format';
-import { formatRepliesWorklist } from '@modules/outreach/replies.format';
+import {
+  formatAutoReplyResult,
+  formatRepliesWorklist,
+} from '@modules/outreach/replies.format';
 import { FloodWaitTracker } from '@modules/telegram/flood-wait.tracker';
 
 /**
@@ -81,6 +84,15 @@ export class OutreachService {
   /** Worklist ответивших без похода в Telegram — из базы. */
   public async replies(): Promise<string> {
     return formatRepliesWorklist(await this.leads.getRepliesWorklist());
+  }
+
+  /**
+   * Авто-ответ шаблоном тем, кто ответил и кому мы ещё не отвечали.
+   * dryRun=true (по умолчанию) — только показать, кому что уйдёт.
+   */
+  public async autoReply(dryRun: boolean, limit: number): Promise<string> {
+    const result = await this.dialogs.autoReplyUnanswered({ dryRun, limit });
+    return formatAutoReplyResult(result);
   }
 
   public async mark(usernames: string[], status: LeadStatus): Promise<string> {
