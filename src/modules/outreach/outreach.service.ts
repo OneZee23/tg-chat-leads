@@ -74,7 +74,8 @@ export class OutreachService {
       ? `\n⚠ Лимиты Telegram: ${this.flood.summary()}\n`
       : '';
     const head =
-      `\nПересчёт: проверено ${stat.checked}, ответивших ${stat.replied}` +
+      `\nПересчёт: проверено ${stat.checked}, ждут ответа ${stat.replied}, ` +
+      `уже отвечено ${stat.answered}` +
       (stat.deepReads ? ` (глубоких чтений ${stat.deepReads})` : '') +
       '\n' +
       floodLine;

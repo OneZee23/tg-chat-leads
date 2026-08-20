@@ -223,6 +223,7 @@ export class DialogsService {
   public async recountReplies(): Promise<{
     checked: number;
     replied: number;
+    answered: number;
     deepReads: number;
   }> {
     const client = this.telegram.getClient();
@@ -232,7 +233,7 @@ export class DialogsService {
     // лимитирует — на трёх сотнях это FloodWait по 3-4 секунды каждый.
     // iterDialogs отдаёт уже разрезолвленные сущности за один проход.
     const sentById = new Map(contacted.map((c) => [c.tgUserId, c.contactedAt]));
-    const result = { checked: 0, replied: 0, deepReads: 0 };
+    const result = { checked: 0, replied: 0, answered: 0, deepReads: 0 };
 
     for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
       if (!dialog.isUser) continue;
@@ -247,46 +248,48 @@ export class DialogsService {
       const sentAt = sent ? sent.getTime() : 0;
       const last = dialog.message;
 
-      let reply: Api.Message | undefined;
-
       if (
         last &&
         last.out === false &&
         (last.message ?? '').trim() &&
         last.date * 1000 > sentAt
       ) {
-        // Последнее сообщение — их ответ, текст уже на руках, лишний запрос
-        // не нужен.
-        reply = last;
+        // Последнее сообщение — их ответ, и он не отвечен (ниже него ничего
+        // нашего нет). Ждёт нас.
+        await this.leads.recordReply(id, last.message, new Date(last.date * 1000));
+        result.replied += 1;
       } else if (last && last.out === true) {
-        // Мы ответили последними — ответ человека выше по истории. Читаем её,
-        // но getMessages по готовой сущности НЕ дёргает ResolveUsername.
+        // Последнее сообщение наше. Либо это исходное письмо (ответа не было),
+        // либо мы уже ответили на их ответ. Читаем историю, чтобы отличить.
         try {
           const messages = await client.getMessages(entity, {
             limit: this.config.deepLimit,
           });
-          reply = messages.find(
+          result.deepReads += 1;
+          await sleep(this.config.deepDelayMs);
+
+          const reply = messages.find(
             (m: Api.Message) =>
               m.out === false &&
               (m.message ?? '').trim().length > 0 &&
               m.date * 1000 > sentAt,
           );
-          result.deepReads += 1;
-          await sleep(this.config.deepDelayMs);
+          if (reply) {
+            // Человек ответил, а последнее сообщение наше — значит мы уже
+            // ответили руками. Помечаем answered, чтобы worklist не врал.
+            await this.leads.markAnswered(id);
+            result.answered += 1;
+          }
+          // Иначе ответа не было (последнее — наше письмо), не трогаем.
         } catch (err) {
           this.logger.warn(`Пересчёт: id${id} — ${describeError(err)}`);
         }
       }
-
-      if (reply) {
-        await this.leads.recordReply(id, reply.message, new Date(reply.date * 1000));
-        result.replied += 1;
-      }
     }
 
     this.logger.log(
-      `Пересчёт ответов: проверено ${result.checked}, ответили ${result.replied}, ` +
-        `глубоких чтений ${result.deepReads}`,
+      `Пересчёт: проверено ${result.checked}, ждут ответа ${result.replied}, ` +
+        `уже отвечено ${result.answered}, глубоких чтений ${result.deepReads}`,
     );
     return result;
   }
