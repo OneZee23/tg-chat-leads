@@ -90,11 +90,11 @@ describe('suggestReply', () => {
     expect(s.hint).toContain('сам');
   });
 
-  it('на тёплое — онбординг со ссылкой', () => {
+  it('на тёплое — онбординг со ссылкой, в тёплом тоне', () => {
     const s = suggestReply('Хочу попробовать');
     expect(s.kind).toBe('positive');
     expect(s.draft).toContain('teachtrack.ru');
-    expect(s.draft).toContain('Добавить ученика');
+    expect(s.draft).toContain('списком');
   });
 
   it('на отказ — вежливое закрытие и подсказка про skip', () => {
@@ -104,9 +104,11 @@ describe('suggestReply', () => {
     expect(s.hint).toContain('skip');
   });
 
-  it('на нейтральное — лёгкое касание со ссылкой', () => {
+  it('на нейтральное — лёгкое касание со ссылкой, без канцелярита', () => {
     const s = suggestReply('Здравствуйте');
     expect(s.draft).toContain('teachtrack.ru');
+    // Больше не «Ссылка — …, вход по почте».
+    expect(s.draft).not.toContain('вход по почте');
   });
 });
 
