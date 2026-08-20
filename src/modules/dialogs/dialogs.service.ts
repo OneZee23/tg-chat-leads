@@ -3,8 +3,8 @@ import { Api } from 'telegram';
 import { sleep } from '@common/utils/sleep';
 import { DialogsConfig } from '@modules/dialogs/dialogs.config';
 import { LeadService } from '@modules/lead/lead.service';
-import { autoReplyTemplate } from '@modules/outreach/reply-draft';
-import { ReplyKind } from '@modules/outreach/reply-draft';
+import { autoReplyDecision } from '@modules/outreach/reply-draft';
+import { AutoAction, ReplyKind } from '@modules/outreach/reply-draft';
 import { ScannerConfig } from '@modules/scanner/scanner.config';
 import { TelegramClientService } from '@modules/telegram/telegram-client.service';
 
@@ -13,7 +13,10 @@ export interface AutoReplyEntry {
   tgUserId: string;
   kind: ReplyKind;
   reply: string;
-  result: 'preview' | 'sent' | 'failed';
+  /** Что решено/сделано: отправить шаблон / закрыть без ответа / оставить тебе. */
+  action: AutoAction;
+  reason: string;
+  result: 'preview' | 'sent' | 'cleared' | 'failed';
   error?: string;
 }
 
@@ -21,8 +24,10 @@ export interface AutoReplyResult {
   dryRun: boolean;
   /** Отправлено (или «ушло бы» в dry-run). */
   sent: number;
-  /** Пропущено на ручной разбор (вопрос/нейтральное). */
-  skippedManual: number;
+  /** Закрыто без ответа (короткое нейтральное). */
+  cleared: number;
+  /** Оставлено тебе (вопрос / просьба / развёрнутый фидбек). */
+  manual: number;
   stoppedBecause: string;
   entries: AutoReplyEntry[];
 }
@@ -313,14 +318,17 @@ export class DialogsService {
     const result: AutoReplyResult = {
       dryRun: options.dryRun,
       sent: 0,
-      skippedManual: 0,
+      cleared: 0,
+      manual: 0,
       stoppedBecause: 'кандидаты закончились',
       entries: [],
     };
 
     for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+      // Лимит считаем по отправкам: закрытие без ответа и «оставить тебе»
+      // сообщений не шлют, ограничивать их незачем.
       if (result.sent >= cap) {
-        result.stoppedBecause = `упёрлись в лимит (${cap})`;
+        result.stoppedBecause = `упёрлись в лимит отправок (${cap})`;
         break;
       }
       if (!dialog.isUser) continue;
@@ -371,19 +379,37 @@ export class DialogsService {
       );
       if (!theirReply) continue;
 
-      const template = autoReplyTemplate(theirReply.message);
-      if (!template.text) {
-        result.skippedManual += 1;
-        continue;
-      }
-
+      const decision = autoReplyDecision(theirReply.message);
       const entry = {
         username: entity.username ?? null,
         tgUserId: id,
-        kind: template.kind,
+        kind: decision.kind,
+        action: decision.action,
+        reason: decision.reason,
         reply: theirReply.message.replace(/\s+/g, ' ').trim().slice(0, 120),
       };
 
+      // Оставляем тебе: вопрос / просьба о ссылке / развёрнутый фидбек.
+      if (decision.action === 'manual') {
+        result.manual += 1;
+        continue;
+      }
+
+      // Закрыть без ответа: короткое нейтральное, ответа не требует.
+      if (decision.action === 'clear') {
+        result.cleared += 1;
+        if (!options.dryRun) {
+          try {
+            await this.leads.markAnswered(id);
+          } catch (err) {
+            this.logger.warn(`Авто-закрытие id${id}: markAnswered упал: ${describeError(err)}`);
+          }
+        }
+        result.entries.push({ ...entry, result: options.dryRun ? 'preview' : 'cleared' });
+        continue;
+      }
+
+      // Отправить шаблон.
       if (options.dryRun) {
         result.entries.push({ ...entry, result: 'preview' });
         result.sent += 1; // в dry-run считаем «сколько бы ушло»
@@ -391,7 +417,7 @@ export class DialogsService {
       }
 
       try {
-        await client.sendMessage(entity, { message: template.text });
+        await client.sendMessage(entity, { message: decision.text ?? '' });
       } catch (err) {
         // Ошибка на отправке (в т.ч. FloodWait — он уже записан трекером
         // через обёртку invoke) останавливает проход: сыпать дальше при
@@ -420,8 +446,7 @@ export class DialogsService {
 
     this.logger.log(
       `Авто-ответ (${options.dryRun ? 'preview' : 'боевой'}): ` +
-        `${options.dryRun ? 'кандидатов' : 'отправлено'} ${result.sent}, ` +
-        `на разбор руками ${result.skippedManual}`,
+        `отправлено ${result.sent}, закрыто ${result.cleared}, тебе ${result.manual}`,
     );
     return result;
   }

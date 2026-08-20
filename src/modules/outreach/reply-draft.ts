@@ -82,9 +82,11 @@ const POSITIVE_MARKERS = [
   'посмотрю',
   'гляну',
   'зарегистрир',
-  'спасибо',
   'супер',
 ];
+// «спасибо» намеренно НЕ здесь: голое «спасибо большое» — вежливость, а не
+// интерес, и слать на него «рад что заинтересовало» звучит как недочитавший
+// бот. «Спасибо, попробую» остаётся позитивом через «попробу».
 
 // Черновики для ручного разбора (yarn replies). Тон — как OneZee пишет сам:
 // тепло, разговорно, «рад что заинтересовало», «поправлю быстро», без
@@ -185,4 +187,85 @@ export function autoReplyTemplate(text: string): AutoReply {
     default:
       return { kind, text: null };
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Полное авто-решение по ответу: ответить / закрыть / отдать человеку
+// ─────────────────────────────────────────────────────────────────────────
+
+export type AutoAction = 'send' | 'clear' | 'manual';
+
+export interface AutoDecision {
+  action: AutoAction;
+  /** Текст для action='send'. */
+  text: string | null;
+  kind: ReplyKind;
+  /** Почему такое решение — для превью. */
+  reason: string;
+}
+
+/** Просит ссылку / гайд / «как завести» — нужен онбординг, а не шаблон. */
+const REQUEST_MARKERS = [
+  'киньте',
+  'скинь',
+  'пришлите',
+  'дайте ссылк',
+  'ссылку',
+  'гайд',
+  'как туда',
+  'как добавить',
+  'как завести',
+  'как начать',
+  'как регать',
+  'как зарегистр',
+  'как попасть',
+  'как пользоваться',
+];
+
+/** Развёрнутый фидбек — заслуживает личного ответа, не шаблона. */
+const FEEDBACK_MARKERS = [
+  'докрутить',
+  'не хватает',
+  'было бы',
+  'предлож',
+  'фидбек',
+  'недочет',
+  'улучшить',
+  'пожелани',
+  'вкладку',
+  'функци',
+  'фичу',
+  'добавьте',
+];
+
+// Длиннее этого — почти всегда осмысленное сообщение, а не «ок/спасибо».
+const SUBSTANTIVE_LEN = 200;
+
+/**
+ * Что делать с ответом человека без твоего участия:
+ *  • manual — оставить тебе (вопрос / просьба о ссылке / развёрнутый фидбек);
+ *  • send   — отправить шаблон (позитив/отказ) и закрыть;
+ *  • clear  — короткое нейтральное («ок», «спасибо»): ответа не требует,
+ *             просто убираем из списка.
+ */
+export function autoReplyDecision(text: string): AutoDecision {
+  const normalized = (text ?? '').toLowerCase().replace(/ё/g, 'е');
+  const kind = classifyReply(text);
+
+  if (kind === 'question') {
+    return { action: 'manual', text: null, kind, reason: 'вопрос — нужен твой ответ' };
+  }
+  if (REQUEST_MARKERS.some((m) => normalized.includes(m))) {
+    return { action: 'manual', text: null, kind, reason: 'просит ссылку/гайд — ответь с онбордингом' };
+  }
+  if (normalized.length > SUBSTANTIVE_LEN || FEEDBACK_MARKERS.some((m) => normalized.includes(m))) {
+    return { action: 'manual', text: null, kind, reason: 'развёрнутый ответ/фидбек — ответь лично' };
+  }
+  if (kind === 'decline') {
+    return { action: 'send', text: AUTO_DECLINE, kind, reason: 'отказ' };
+  }
+  if (kind === 'positive') {
+    return { action: 'send', text: AUTO_POSITIVE, kind, reason: 'позитив' };
+  }
+  return { action: 'clear', text: null, kind, reason: 'нейтральное, ответа не требует' };
 }

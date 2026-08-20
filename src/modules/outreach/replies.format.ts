@@ -51,43 +51,44 @@ export function formatRepliesWorklist(leads: LeadEntity[]): string {
 export function formatAutoReplyResult(result: {
   dryRun: boolean;
   sent: number;
-  skippedManual: number;
+  cleared: number;
+  manual: number;
   stoppedBecause: string;
   entries: Array<{
     username: string | null;
     kind: string;
     reply: string;
+    action: string;
+    reason: string;
     result: string;
+    error?: string;
   }>;
 }): string {
-  const head = result.dryRun
-    ? 'ПРЕДПРОСМОТР (ничего не отправлено)'
-    : result.sent > 0
-      ? 'Авто-ответ отправлен'
-      : 'Авто-ответ: отправлять было нечего';
+  const head = result.dryRun ? 'ПРЕДПРОСМОТР (ничего не отправлено)' : 'Авто-разбор выполнен';
   const lines: string[] = ['', head, ''];
 
-  if (result.entries.length === 0) {
-    lines.push('Некому: нет неотвеченных ответов с однозначным позитивом/отказом.');
-    lines.push(`На ручной разбор (вопросы, нейтральное): ${result.skippedManual}`);
-    lines.push('');
-    return lines.join('\n');
-  }
+  // Что делаем с каждым, человекочитаемо.
+  const label: Record<string, string> = {
+    send: result.dryRun ? 'отправлю шаблон' : 'шаблон отправлен',
+    clear: result.dryRun ? 'закрою без ответа' : 'закрыто без ответа',
+  };
 
   result.entries.forEach((e, i) => {
     const nick = e.username ? `@${e.username}` : '(без ника)';
-    const verb = result.dryRun ? 'уйдёт' : e.result === 'sent' ? 'ушло' : e.result;
-    lines.push(`${String(i + 1).padStart(2, ' ')}. ${nick}  ·  ${e.kind}  ·  ${verb}`);
+    const what = e.result === 'failed' ? `ОШИБКА: ${e.error ?? ''}` : label[e.action] ?? e.action;
+    lines.push(`${String(i + 1).padStart(2, ' ')}. ${nick}  ·  ${e.kind}  ·  ${what}`);
     lines.push(`    он: ${e.reply}`);
   });
 
   lines.push('');
-  lines.push(`${result.dryRun ? 'Ушло бы' : 'Отправлено'}: ${result.sent}`);
-  lines.push(`На ручной разбор (вопросы, нейтральное): ${result.skippedManual}`);
+  lines.push('—'.repeat(60));
+  lines.push(`${result.dryRun ? 'Ушло бы шаблонов' : 'Отправлено шаблонов'}: ${result.sent}`);
+  lines.push(`Закрыто без ответа (нейтральные): ${result.cleared}`);
+  lines.push(`Оставлено тебе (вопросы, просьбы, фидбек): ${result.manual}  →  yarn replies`);
   lines.push(`Остановка: ${result.stoppedBecause}`);
   if (result.dryRun) {
     lines.push('');
-    lines.push('Если всё верно — отправить по-настоящему: yarn autoreply:send');
+    lines.push('Если всё верно — выполнить по-настоящему: yarn autoreply:send');
   }
   lines.push('');
   return lines.join('\n');

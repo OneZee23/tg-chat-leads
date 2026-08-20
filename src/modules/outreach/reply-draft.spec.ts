@@ -1,4 +1,5 @@
 import {
+  autoReplyDecision,
   autoReplyTemplate,
   classifyReply,
   suggestReply,
@@ -134,5 +135,55 @@ describe('autoReplyTemplate', () => {
   it('нейтральное → авто-ответа НЕТ (руками)', () => {
     expect(autoReplyTemplate('Здравствуйте, я посредник, передам').text).toBeNull();
     expect(autoReplyTemplate('но я только начал').text).toBeNull();
+  });
+
+  it('голое «спасибо» — уже не позитив', () => {
+    expect(classifyReply('Спасибо большое')).toBe('neutral');
+    expect(classifyReply('Спасибо💜')).toBe('neutral');
+    // Но «спасибо, попробую» остаётся позитивом.
+    expect(classifyReply('спасибо, попробую')).toBe('positive');
+  });
+});
+
+describe('autoReplyDecision', () => {
+  it('позитив → отправить шаблон', () => {
+    const d = autoReplyDecision('Здравствуйте, можно попробовать)');
+    expect(d.action).toBe('send');
+    expect(d.text).toContain('рад что заинтересовало');
+  });
+
+  it('отказ → отправить шаблон', () => {
+    const d = autoReplyDecision('Спасибо, не интересует.');
+    expect(d.action).toBe('send');
+    expect(d.text).toContain('в любом случае ответили');
+  });
+
+  it('короткое нейтральное → закрыть без ответа', () => {
+    expect(autoReplyDecision('Хорошо').action).toBe('clear');
+    expect(autoReplyDecision('Спасибо большое').action).toBe('clear');
+    expect(autoReplyDecision('Да набираю').action).toBe('clear');
+  });
+
+  it('вопрос → тебе', () => {
+    expect(autoReplyDecision('а группы можно добавлять?').action).toBe('manual');
+  });
+
+  it('просьба дать ссылку/гайд → тебе', () => {
+    const d = autoReplyDecision('Киньте ссылку и краткий гайд как учеников туда регать');
+    expect(d.action).toBe('manual');
+    expect(d.reason).toContain('ссылку');
+  });
+
+  it('развёрнутый фидбек → тебе, не шаблон', () => {
+    const d = autoReplyDecision(
+      'Прикольно, но лично мне не полезно. Что вижу докрутить: демо без регистрации, '
+        + 'импорт из Excel, финансовая часть — вот тут главная дыра, нужны подписки и ставки',
+    );
+    expect(d.action).toBe('manual');
+  });
+
+  it('фидбек про фичу (вкладку домашки) → тебе', () => {
+    const d = autoReplyDecision('я бы сделала вкладку за домашнюю работу, часто забываю задания');
+    expect(d.action).toBe('manual');
   });
 });
