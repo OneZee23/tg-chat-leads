@@ -330,16 +330,48 @@ export class DialogsService {
       const id = entity.id.toString();
       const sentAt = candidates.get(id);
       if (sentAt === undefined) continue;
+      const cutoff = sentAt ? sentAt.getTime() : 0;
 
-      // Последнее сообщение должно быть ИХ (входящее) и позже нашего письма —
-      // тогда это неотвеченный ответ. Если последнее наше, значит мы уже
-      // ответили, пропускаем.
+      // Дешёвый пред-фильтр по последнему сообщению: похоже ли на
+      // неотвеченный ответ. Отсекает почти всех, не тратя запрос истории.
       const last = dialog.message;
       if (!last || last.out !== false) continue;
       if ((last.message ?? '').trim().length === 0) continue;
-      if (sentAt && last.date * 1000 <= sentAt.getTime()) continue;
+      if (last.date * 1000 <= cutoff) continue;
 
-      const template = autoReplyTemplate(last.message);
+      // Авторитетная проверка по ИСТОРИИ, а не по одному последнему сообщению.
+      // Ручной ответ нигде не фиксируется и статус не двигает, поэтому
+      // «последнее сообщение — их» ложно пропускает случай «ты ответил руками,
+      // человек написал ещё раз». Читаем историю (по резолвнутой сущности —
+      // без ResolveUsername) и пропускаем, если после нашего письма есть ХОТЬ
+      // ОДНО наше исходящее: значит мы уже ответили (руками или прошлым авто).
+      let messages;
+      try {
+        messages = await client.getMessages(entity, { limit: this.config.deepLimit });
+        await sleep(this.config.deepDelayMs);
+      } catch (err) {
+        // Не смогли прочитать историю — молчим и идём дальше. Отправлять
+        // вслепую нельзя: это ровно тот повтор, что мы предотвращаем.
+        this.logger.warn(
+          `Авто-ответ: id${id} — история недоступна: ${describeError(err)}`,
+        );
+        continue;
+      }
+
+      const weAlreadyAnswered = messages.some(
+        (m: Api.Message) => m.out === true && m.date * 1000 > cutoff,
+      );
+      if (weAlreadyAnswered) continue;
+
+      const theirReply = messages.find(
+        (m: Api.Message) =>
+          m.out === false &&
+          (m.message ?? '').trim().length > 0 &&
+          m.date * 1000 > cutoff,
+      );
+      if (!theirReply) continue;
+
+      const template = autoReplyTemplate(theirReply.message);
       if (!template.text) {
         result.skippedManual += 1;
         continue;
@@ -349,7 +381,7 @@ export class DialogsService {
         username: entity.username ?? null,
         tgUserId: id,
         kind: template.kind,
-        reply: last.message.replace(/\s+/g, ' ').trim().slice(0, 120),
+        reply: theirReply.message.replace(/\s+/g, ' ').trim().slice(0, 120),
       };
 
       if (options.dryRun) {
@@ -360,10 +392,6 @@ export class DialogsService {
 
       try {
         await client.sendMessage(entity, { message: template.text });
-        await this.leads.markAnswered(id);
-        result.entries.push({ ...entry, result: 'sent' });
-        result.sent += 1;
-        await sleep(this.config.autoReplyDelaySec * 1000);
       } catch (err) {
         // Ошибка на отправке (в т.ч. FloodWait — он уже записан трекером
         // через обёртку invoke) останавливает проход: сыпать дальше при
@@ -373,6 +401,21 @@ export class DialogsService {
         result.stoppedBecause = `ошибка отправки: ${message}`;
         break;
       }
+
+      // Сообщение УШЛО. markAnswered отдельно: его сбой не имеет права
+      // выдать отправленное за провал. Даже если пометка не пройдёт,
+      // следующий запуск увидит наше исходящее в истории и не отправит
+      // второй раз.
+      result.entries.push({ ...entry, result: 'sent' });
+      result.sent += 1;
+      try {
+        await this.leads.markAnswered(id);
+      } catch (err) {
+        this.logger.error(
+          `Авто-ответ ушёл @${entry.username}, но markAnswered упал: ${describeError(err)}`,
+        );
+      }
+      await sleep(this.config.autoReplyDelaySec * 1000);
     }
 
     this.logger.log(

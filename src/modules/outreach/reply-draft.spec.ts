@@ -32,6 +32,19 @@ describe('classifyReply', () => {
     expect(classifyReply('спасибо, мне не подходит')).toBe('decline');
   });
 
+  it('отрицание позитива — отказ, а не позитив (ревью нашло на «не хочу»)', () => {
+    // «не хочу» содержит «хочу», раньше сходило за позитив.
+    expect(classifyReply('спасибо, не хочу')).toBe('decline');
+    expect(classifyReply('не буду пробовать')).toBe('decline');
+    expect(classifyReply('не очень интересно, честно')).toBe('decline');
+    expect(classifyReply('мне неудобно этим пользоваться')).toBe('decline');
+  });
+
+  it('позитив без отрицания по-прежнему позитив', () => {
+    expect(classifyReply('хочу попробовать')).toBe('positive');
+    expect(classifyReply('интересно, гляну')).toBe('positive');
+  });
+
   it('нейтральное — когда ни отказа, ни вопроса, ни явного интереса', () => {
     expect(classifyReply('Здравствуйте')).toBe('neutral');
     expect(classifyReply('')).toBe('neutral');

@@ -62,7 +62,9 @@ export function formatAutoReplyResult(result: {
 }): string {
   const head = result.dryRun
     ? 'ПРЕДПРОСМОТР (ничего не отправлено)'
-    : 'Авто-ответ отправлен';
+    : result.sent > 0
+      ? 'Авто-ответ отправлен'
+      : 'Авто-ответ: отправлять было нечего';
   const lines: string[] = ['', head, ''];
 
   if (result.entries.length === 0) {
