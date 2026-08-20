@@ -47,6 +47,25 @@ const DECLINE_MARKERS = [
 const DECLINE_NEGATION =
   /(^|[^а-я])не(\s+\S+){0,2}\s+(хоч|интерес|удобн|нужн|подход|буд|готов|проб|пойд|стан)/;
 
+/**
+ * Сильная похвала продукту. Если она стоит рядом с фразой-отказом, отказ,
+ * скорее всего, относится к детали, а не к сервису («супер, всё удобно, НЕ
+ * НУЖНО разбираться»), — такой случай двусмысленный и уходит на ручной
+ * разбор, а не режется в decline. Слова подобраны так, чтобы не задевать
+ * отрицания: «удобн» сюда НЕ входит (иначе поймало бы «неудобно»).
+ */
+const STRONG_PRAISE = [
+  'супер',
+  'класс', // классно / классный
+  'отличн',
+  'лаконичн',
+  'качествен',
+  'понрав',
+  'здорово',
+  'красив',
+  'нравится',
+];
+
 const POSITIVE_MARKERS = [
   'хочу',
   'давайте',
@@ -88,8 +107,14 @@ export function classifyReply(text: string): ReplyKind {
 
   // Отказ: явные фразы + отрицание позитива («не хочу», «не буду пробовать»).
   // «спасибо, не интересует» содержит и «спасибо» (позитив), но по сути нет.
-  if (DECLINE_MARKERS.some((m) => normalized.includes(m))) return 'decline';
-  if (DECLINE_NEGATION.test(normalized)) return 'decline';
+  const declineHit =
+    DECLINE_MARKERS.some((m) => normalized.includes(m)) || DECLINE_NEGATION.test(normalized);
+  if (declineHit) {
+    // Отказ-фраза рядом с сильной похвалой — двусмысленно («супер, удобно, не
+    // нужно разбираться»). Не режем в отказ, отдаём человеку.
+    if (STRONG_PRAISE.some((p) => normalized.includes(p))) return 'neutral';
+    return 'decline';
+  }
 
   if (POSITIVE_MARKERS.some((m) => normalized.includes(m))) return 'positive';
 
