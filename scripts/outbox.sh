@@ -13,11 +13,22 @@ FILE=""
 
 for arg in "$@"; do
   case "$arg" in
-    --send) SEND="&send=true" ;;
-    *) FILE="&file=$arg" ;;
+    --send) SEND="yes" ;;
+    *) FILE="$arg" ;;
   esac
 done
 
 HOST="${LEADGEN_HOST:-http://127.0.0.1:3010}"
 
-curl -sS --max-time 900 -XPOST "$HOST/outreach/outbox/send?limit=200$SEND$FILE"
+# Значения кодируем, а не склеиваем в строку URL: имя файла приходит
+# снаружи, и склейка позволяла бы дописать к предпросмотру `&send=true` —
+# то есть отправить по-настоящему там, где человек ждал показа.
+set -- -sS --max-time 900 -X POST -G --data-urlencode "limit=200"
+if [ -n "$SEND" ]; then
+  set -- "$@" --data-urlencode "send=true"
+fi
+if [ -n "$FILE" ]; then
+  set -- "$@" --data-urlencode "file=$FILE"
+fi
+
+curl "$@" "$HOST/outreach/outbox/send"
