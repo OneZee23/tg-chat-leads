@@ -47,7 +47,18 @@ export function parseDumpTimestamp(name: string): number | null {
   const m = STAMP.exec(name ?? '');
   if (!m) return null;
   const [, y, mo, d, h, mi] = m;
-  const at = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi));
+
+  // Валидируем диапазоны дат: месяц 1-12, день 1-31, час 0-23, минута 0-59
+  const month = Number(mo);
+  const day = Number(d);
+  const hour = Number(h);
+  const minute = Number(mi);
+
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) {
+    return null;
+  }
+
+  const at = new Date(Number(y), month - 1, day, hour, minute);
   return Math.floor(at.getTime() / 1000);
 }
 
@@ -86,10 +97,16 @@ export function readOutbox(name: string, baseDir = process.cwd()): string {
 /** Самый свежий файл — чтобы `yarn outbox` работал без аргументов. */
 export function newestOutboxName(baseDir = process.cwd()): string | null {
   const names = listOutbox(baseDir);
-  if (names.length === 0) return null;
-  // Имена — стампы, поэтому лексикографическая сортировка совпадает с
-  // хронологической. Читать mtime незачем.
-  return [...names].sort().reverse()[0];
+  // Отбираем только файлы с валидными стампами: имя без стампа не может быть
+  // «самым свежим», его время неизвестно.
+  const valid = names.filter((n) => parseDumpTimestamp(n) !== null);
+  if (valid.length === 0) return null;
+  // Сортируем по распарсенному времени (unix-секунды) для гарантированной корректности.
+  return valid.sort((a, b) => {
+    const ats = parseDumpTimestamp(a);
+    const bts = parseDumpTimestamp(b);
+    return (ats || 0) - (bts || 0);
+  }).reverse()[0];
 }
 
 function listOutbox(baseDir: string): string[] {

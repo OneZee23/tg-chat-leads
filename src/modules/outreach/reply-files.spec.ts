@@ -50,6 +50,26 @@ describe('parseDumpTimestamp', () => {
   it('имя переименовали руками — null, проверку свежести делать не по чему', () => {
     expect(parseDumpTimestamp('ответы-на-вторник.md')).toBeNull();
   });
+
+  it('невалидный месяц (13) — null, дата не прошла проверку диапазонов', () => {
+    expect(parseDumpTimestamp('2026-13-03-1430.md')).toBeNull();
+  });
+
+  it('невалидный месяц (0) — null, дата не прошла проверку диапазонов', () => {
+    expect(parseDumpTimestamp('2026-00-00-0000.md')).toBeNull();
+  });
+
+  it('невалидный день (32) — null, дата не прошла проверку диапазонов', () => {
+    expect(parseDumpTimestamp('2026-09-32-1430.md')).toBeNull();
+  });
+
+  it('невалидный час (25) — null, дата не прошла проверку диапазонов', () => {
+    expect(parseDumpTimestamp('2026-09-03-2530.md')).toBeNull();
+  });
+
+  it('невалидная минута (60) — null, дата не прошла проверку диапазонов', () => {
+    expect(parseDumpTimestamp('2026-09-03-1460.md')).toBeNull();
+  });
 });
 
 describe('writeInbox / readOutbox / newestOutboxName', () => {
@@ -96,5 +116,24 @@ describe('writeInbox / readOutbox / newestOutboxName', () => {
 
   it('папки outbox нет — null, а не падение', () => {
     expect(newestOutboxName(sandbox())).toBeNull();
+  });
+
+  it('игнорирует файл без стампа в имени, возвращает свежий стамп', () => {
+    const base = sandbox();
+    mkdirSync(join(base, 'outbox'));
+    // Кириллическое имя сортируется после всех дат по коду символов
+    for (const name of ['2026-09-01-1000.md', '2026-09-03-1430.md', 'ответы-на-вторник.md']) {
+      writeFileSync(join(base, 'outbox', name), 'x', 'utf8');
+    }
+    expect(newestOutboxName(base)).toBe('2026-09-03-1430.md');
+  });
+
+  it('возвращает null, когда в папке только файлы без стампов', () => {
+    const base = sandbox();
+    mkdirSync(join(base, 'outbox'));
+    for (const name of ['ответы-на-вторник.md', 'кое-что.md']) {
+      writeFileSync(join(base, 'outbox', name), 'x', 'utf8');
+    }
+    expect(newestOutboxName(base)).toBeNull();
   });
 });
