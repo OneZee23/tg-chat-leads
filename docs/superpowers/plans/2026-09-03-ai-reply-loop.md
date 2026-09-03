@@ -751,7 +751,8 @@ git commit -m "feat: файловый слой inbox/outbox — basename-guard �
 - Test: `src/modules/outreach/inbox.format.spec.ts`
 
 **Interfaces:**
-- Consumes: ничего.
+- Consumes: `OUTBOX_DIR` из `@modules/outreach/reply-files` (Task 3) — в тексте
+  файла упоминается папка, куда класть ответы. Task 3 идёт раньше.
 - Produces: `InboxMessage { out: boolean; at: string; text: string; fresh: boolean }`, `InboxDialog { tgUserId: string; username: string | null; hook: string; about: string | null; heuristic: { kind: string; action: string; reason: string }; history: InboxMessage[] }`, `InboxDump { createdAt: string; dialogsSeen: number; dialogs: InboxDialog[]; trivial: InboxDialog[]; stoppedBecause: string }`, `formatInbox(dump: InboxDump): string`, `formatInboxSummary(dump: InboxDump, path: string): string`.
 
 Типы объявлены здесь, а не в `dialogs.service.ts`, чтобы форматтер тестировался без Telegram; `DialogsService` их импортирует. Обратной зависимости нет — цикла не возникает.
@@ -1460,6 +1461,11 @@ function formatStamp(at: Date): string {
 
 Run: `yarn test && yarn lint:ci && yarn build`
 Expected: PASS. `noUnusedLocals: true` поймает лишние импорты.
+
+Юнит-тестов у метода нет намеренно, как и у Task 8: он почти целиком — обход
+`iterDialogs` и вызовы GramJS, мок которых проверял бы мок. Логика, где можно
+ошибиться, вынесена в `sliceUnanswered` (Task 1) и покрыта там. Поведение
+метода проверяется живьём в финальном чеклисте.
 
 - [ ] **Step 3: Коммит**
 
