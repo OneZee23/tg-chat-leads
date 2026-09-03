@@ -6,12 +6,7 @@ import { OutboxDirective } from '@modules/outreach/outbox.parse';
  */
 
 export type OutboxEntryResult =
-  | 'preview'
-  | 'sent'
-  | 'closed'
-  | 'asked'
-  | 'skipped'
-  | 'failed';
+  'preview' | 'sent' | 'closed' | 'asked' | 'skipped' | 'failed';
 
 export interface OutboxSendEntry {
   tgUserId: string;

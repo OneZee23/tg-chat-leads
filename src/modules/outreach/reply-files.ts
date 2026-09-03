@@ -62,7 +62,11 @@ export function parseDumpTimestamp(name: string): number | null {
   return Math.floor(at.getTime() / 1000);
 }
 
-export function writeInbox(name: string, content: string, baseDir = process.cwd()): string {
+export function writeInbox(
+  name: string,
+  content: string,
+  baseDir = process.cwd(),
+): string {
   assertSafeName(name);
   const dir = join(baseDir, INBOX_DIR);
   mkdirSync(dir, { recursive: true });
@@ -89,7 +93,9 @@ export function readOutbox(name: string, baseDir = process.cwd()): string {
   assertSafeName(name);
   const path = join(baseDir, OUTBOX_DIR, name);
   if (!existsSync(path)) {
-    throw new UnsafeFileNameError(`Файла ${OUTBOX_DIR}/${name} нет. Что лежит рядом: ${listOutbox(baseDir).join(', ') || '(папка пуста)'}`);
+    throw new UnsafeFileNameError(
+      `Файла ${OUTBOX_DIR}/${name} нет. Что лежит рядом: ${listOutbox(baseDir).join(', ') || '(папка пуста)'}`,
+    );
   }
   return readFileSync(path, 'utf8');
 }
@@ -102,11 +108,13 @@ export function newestOutboxName(baseDir = process.cwd()): string | null {
   const valid = names.filter((n) => parseDumpTimestamp(n) !== null);
   if (valid.length === 0) return null;
   // Сортируем по распарсенному времени (unix-секунды) для гарантированной корректности.
-  return valid.sort((a, b) => {
-    const ats = parseDumpTimestamp(a);
-    const bts = parseDumpTimestamp(b);
-    return (ats || 0) - (bts || 0);
-  }).reverse()[0];
+  return valid
+    .sort((a, b) => {
+      const ats = parseDumpTimestamp(a);
+      const bts = parseDumpTimestamp(b);
+      return (ats || 0) - (bts || 0);
+    })
+    .reverse()[0];
 }
 
 function listOutbox(baseDir: string): string[] {

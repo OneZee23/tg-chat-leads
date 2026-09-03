@@ -105,17 +105,17 @@ describe('parseOutbox', () => {
   it('битый заголовок ПОСЛЕ валидной записи роняет разбор', () => {
     // Если наткнулись на ### id2 (неправильный уровень после валидной записи),
     // это либо ошибка форматирования, либо markdown в теле. Fail-closed.
-    expect(() => parseOutbox('## id1\nSEND\nпривет\n### id2 @foo\nSEND\nпривет2\n')).toThrow(
-      OutboxParseError,
-    );
+    expect(() =>
+      parseOutbox('## id1\nSEND\nпривет\n### id2 @foo\nSEND\nпривет2\n'),
+    ).toThrow(OutboxParseError);
   });
 
   it('невалидный ник в заголовке роняет разбор', () => {
     // Ник содержит дефис, который не проходит HEADER regexp.
     // Молча вклеится в тело — ошибка.
-    expect(() => parseOutbox('## id1\nSEND\nпривет\n## id2 @bad-user\nSEND\nпривет2\n')).toThrow(
-      OutboxParseError,
-    );
+    expect(() =>
+      parseOutbox('## id1\nSEND\nпривет\n## id2 @bad-user\nSEND\nпривет2\n'),
+    ).toThrow(OutboxParseError);
   });
 
   it('строка, начинающаяся с #, внутри тела роняет разбор', () => {

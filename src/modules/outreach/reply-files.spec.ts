@@ -108,7 +108,11 @@ describe('writeInbox / readOutbox / newestOutboxName', () => {
   it('самый свежий файл в outbox — по имени, оно же стамп', () => {
     const base = sandbox();
     mkdirSync(join(base, 'outbox'));
-    for (const name of ['2026-09-01-1000.md', '2026-09-03-1430.md', '2026-09-02-0900.md']) {
+    for (const name of [
+      '2026-09-01-1000.md',
+      '2026-09-03-1430.md',
+      '2026-09-02-0900.md',
+    ]) {
       writeFileSync(join(base, 'outbox', name), 'x', 'utf8');
     }
     expect(newestOutboxName(base)).toBe('2026-09-03-1430.md');
@@ -122,7 +126,11 @@ describe('writeInbox / readOutbox / newestOutboxName', () => {
     const base = sandbox();
     mkdirSync(join(base, 'outbox'));
     // Кириллическое имя сортируется после всех дат по коду символов
-    for (const name of ['2026-09-01-1000.md', '2026-09-03-1430.md', 'ответы-на-вторник.md']) {
+    for (const name of [
+      '2026-09-01-1000.md',
+      '2026-09-03-1430.md',
+      'ответы-на-вторник.md',
+    ]) {
       writeFileSync(join(base, 'outbox', name), 'x', 'utf8');
     }
     expect(newestOutboxName(base)).toBe('2026-09-03-1430.md');

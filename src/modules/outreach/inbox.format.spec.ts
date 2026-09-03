@@ -11,7 +11,11 @@ function dialog(over: Partial<InboxDialog> = {}): InboxDialog {
     username: 'teacher',
     hook: 'Здравствуйте! Видел, что вы набираете учеников по английскому.',
     about: 'Набираю учеников по английскому, взрослые и подростки',
-    heuristic: { kind: 'question', action: 'manual', reason: 'вопрос — нужен твой ответ' },
+    heuristic: {
+      kind: 'question',
+      action: 'manual',
+      reason: 'вопрос — нужен твой ответ',
+    },
     history: [
       { out: true, at: '2026-09-01 10:00', text: 'наше письмо', fresh: false },
       { out: false, at: '2026-09-03 14:00', text: 'а сколько стоит?', fresh: true },
@@ -65,7 +69,11 @@ describe('formatInbox', () => {
           dialog({
             tgUserId: '555',
             username: null,
-            heuristic: { kind: 'neutral', action: 'clear', reason: 'короткое «ок/спасибо»' },
+            heuristic: {
+              kind: 'neutral',
+              action: 'clear',
+              reason: 'короткое «ок/спасибо»',
+            },
           }),
         ],
       }),

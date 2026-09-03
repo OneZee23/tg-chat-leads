@@ -110,7 +110,9 @@ describe('formatOutboxResult', () => {
   it('предпросмотр записи close НЕ содержит «отправлю» и содержит «закрою без ответа»', () => {
     const out = formatOutboxResult(
       result({
-        entries: [{ tgUserId: '2', username: 'b', directive: 'close', result: 'preview' }],
+        entries: [
+          { tgUserId: '2', username: 'b', directive: 'close', result: 'preview' },
+        ],
       }),
     );
     expect(out).not.toContain('отправлю');

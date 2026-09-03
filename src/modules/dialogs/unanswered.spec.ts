@@ -22,13 +22,21 @@ describe('sliceUnanswered', () => {
   });
 
   it('мы ответили последними — отвечать нечего', () => {
-    const history = [msg(true, 300, 'ответ'), msg(false, 200, 'вопрос'), msg(true, 100, 'письмо')];
+    const history = [
+      msg(true, 300, 'ответ'),
+      msg(false, 200, 'вопрос'),
+      msg(true, 100, 'письмо'),
+    ];
     expect(sliceUnanswered(history, 100).incoming).toEqual([]);
   });
 
   it('нашего исходящего в окне нет — курсор падает на дату письма', () => {
     // Человек написал больше, чем мы читаем: наше письмо уже за границей окна.
-    const history = [msg(false, 400, 'третье'), msg(false, 300, 'второе'), msg(false, 200, 'первое')];
+    const history = [
+      msg(false, 400, 'третье'),
+      msg(false, 300, 'второе'),
+      msg(false, 200, 'первое'),
+    ];
 
     const slice = sliceUnanswered(history, 150);
 

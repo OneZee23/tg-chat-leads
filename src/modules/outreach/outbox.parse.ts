@@ -125,7 +125,9 @@ function toEntry(record: RawRecord): OutboxEntry {
     .trim();
 
   if (directive === 'send' && body.length === 0) {
-    throw new OutboxParseError(`id${record.tgUserId}: SEND без текста. Нечего отправлять.`);
+    throw new OutboxParseError(
+      `id${record.tgUserId}: SEND без текста. Нечего отправлять.`,
+    );
   }
   // Лимит только для SEND — он один уходит в Telegram. ASK и CLOSE остаются для автора.
   if (directive === 'send' && body.length > MAX_REPLY_LEN) {

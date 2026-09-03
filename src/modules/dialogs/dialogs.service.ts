@@ -410,7 +410,9 @@ export class DialogsService {
           try {
             await this.leads.markAnswered(id);
           } catch (err) {
-            this.logger.warn(`Авто-закрытие id${id}: markAnswered упал: ${describeError(err)}`);
+            this.logger.warn(
+              `Авто-закрытие id${id}: markAnswered упал: ${describeError(err)}`,
+            );
           }
         }
         result.entries.push({ ...entry, result: options.dryRun ? 'preview' : 'cleared' });
@@ -650,11 +652,15 @@ export class DialogsService {
       // SEND: перечитываем историю и решаем, актуален ли ещё черновик.
       let messages;
       try {
-        messages = await client.getMessages(dialogEntity, { limit: this.config.deepLimit });
+        messages = await client.getMessages(dialogEntity, {
+          limit: this.config.deepLimit,
+        });
         await sleep(this.config.deepDelayMs);
       } catch (err) {
         result.skipped += 1;
-        result.entries.push(sendEntry(entry, 'skipped', `история недоступна: ${describeError(err)}`));
+        result.entries.push(
+          sendEntry(entry, 'skipped', `история недоступна: ${describeError(err)}`),
+        );
         continue;
       }
 
@@ -663,13 +669,11 @@ export class DialogsService {
         ? Math.floor(candidate.contactedAt.getTime() / 1000)
         : 0;
       const slice = sliceUnanswered(
-        messages.map(
-          (m: Api.Message): HistoryMessage => ({
-            out: m.out === true,
-            date: m.date,
-            message: m.message ?? '',
-          }),
-        ),
+        messages.map((m: Api.Message): HistoryMessage => ({
+          out: m.out === true,
+          date: m.date,
+          message: m.message ?? '',
+        })),
         contactedAtSec,
       );
 
@@ -686,7 +690,9 @@ export class DialogsService {
       const newestSec = slice.incoming[slice.incoming.length - 1].date;
       if (options.dumpedAtSec !== null && newestSec > options.dumpedAtSec) {
         result.skipped += 1;
-        result.entries.push(sendEntry(entry, 'skipped', 'написал ещё раз после выгрузки'));
+        result.entries.push(
+          sendEntry(entry, 'skipped', 'написал ещё раз после выгрузки'),
+        );
         continue;
       }
 
