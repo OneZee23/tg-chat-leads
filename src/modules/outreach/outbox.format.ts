@@ -42,14 +42,37 @@ export interface OutboxSendResult {
   entries: OutboxSendEntry[];
 }
 
-const LABEL: Record<OutboxEntryResult, string> = {
-  preview: 'отправлю',
+const LABEL_BY_RESULT: Record<OutboxEntryResult, string> = {
+  preview: '', // будет переопределен в зависимости от directive
   sent: 'отправлено',
   closed: 'закрыто без ответа',
   asked: 'оставлено тебе',
   skipped: 'пропущено',
   failed: 'ОШИБКА',
 };
+
+/**
+ * Лейбл для preview-результата зависит от директивы, чтобы предпросмотр
+ * честно говорил, что произойдёт, — это единственный режим, где человек
+ * решает, доверять инструменту или нет.
+ */
+function getPreviewLabel(directive: OutboxDirective): string {
+  switch (directive) {
+    case 'send':
+      return 'отправлю';
+    case 'close':
+      return 'закрою без ответа';
+    case 'ask':
+      return 'оставлю тебе';
+  }
+}
+
+function getLabel(result: OutboxEntryResult, directive: OutboxDirective): string {
+  if (result === 'preview') {
+    return getPreviewLabel(directive);
+  }
+  return LABEL_BY_RESULT[result];
+}
 
 export function formatOutboxResult(result: OutboxSendResult): string {
   const lines: string[] = [
@@ -63,7 +86,7 @@ export function formatOutboxResult(result: OutboxSendResult): string {
     const nick = e.username ? `@${e.username}` : `id${e.tgUserId}`;
     const note = e.note ? `  ·  ${e.note}` : '';
     lines.push(
-      `${String(i + 1).padStart(2, ' ')}. ${nick}  ·  ${e.directive}  ·  ${LABEL[e.result]}${note}`,
+      `${String(i + 1).padStart(2, ' ')}. ${nick}  ·  ${e.directive}  ·  ${getLabel(e.result, e.directive)}${note}`,
     );
   });
 
@@ -71,7 +94,7 @@ export function formatOutboxResult(result: OutboxSendResult): string {
   lines.push(`${result.dryRun ? 'Ушло бы' : 'Отправлено'}: ${result.sent}`);
   lines.push(`Закрыто без ответа: ${result.closed}`);
   lines.push(`Оставлено тебе (ASK): ${result.asked}`);
-  lines.push(`Пропущено (диалог изменился): ${result.skipped}`);
+  lines.push(`Пропущено (причина у записи): ${result.skipped}`);
   // Молчаливая потеря лида — ровно то, от чего мы уходим, поэтому цифра
   // печатается всегда, даже нулевая.
   lines.push(

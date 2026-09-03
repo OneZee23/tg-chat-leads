@@ -97,4 +97,54 @@ describe('formatOutboxResult', () => {
     expect(out).toContain('FLOOD_WAIT_420');
     expect(out).toContain('Остановка');
   });
+
+  it('предпросмотр записи send содержит «отправлю»', () => {
+    const out = formatOutboxResult(
+      result({
+        entries: [{ tgUserId: '1', username: 'a', directive: 'send', result: 'preview' }],
+      }),
+    );
+    expect(out).toContain('отправлю');
+  });
+
+  it('предпросмотр записи close НЕ содержит «отправлю» и содержит «закрою без ответа»', () => {
+    const out = formatOutboxResult(
+      result({
+        entries: [{ tgUserId: '2', username: 'b', directive: 'close', result: 'preview' }],
+      }),
+    );
+    expect(out).not.toContain('отправлю');
+    expect(out).toContain('закрою без ответа');
+  });
+
+  it('предпросмотр записи ask НЕ содержит «отправлю» и содержит «оставлю тебе»', () => {
+    const out = formatOutboxResult(
+      result({
+        entries: [{ tgUserId: '3', username: 'c', directive: 'ask', result: 'preview' }],
+      }),
+    );
+    expect(out).not.toContain('отправлю');
+    expect(out).toContain('оставлю тебе');
+  });
+
+  it('итоговая подпись пропущенных не утверждает конкретную причину', () => {
+    const out = formatOutboxResult(
+      result({
+        skipped: 2,
+        entries: [
+          {
+            tgUserId: '9',
+            username: 'd',
+            directive: 'send',
+            result: 'skipped',
+            note: 'ты ответил руками',
+          },
+        ],
+      }),
+    );
+    expect(out).not.toContain('диалог изменился');
+    expect(out).toContain('причина у записи');
+    // Причина в строке записи остаётся
+    expect(out).toContain('ты ответил руками');
+  });
 });
