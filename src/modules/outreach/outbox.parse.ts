@@ -68,7 +68,18 @@ export function parseOutbox(raw: string): OutboxEntry[] {
     }
     // До первого заголовка — преамбула: ассистент может написать там что
     // угодно для человека, на разбор это не влияет.
-    if (records.length > 0) records[records.length - 1].lines.push(line);
+    if (records.length > 0) {
+      // Если строка начинается с # но не совпадает с HEADER, это либо
+      // сломанный заголовок, либо markdown в теле. Fail-closed, чтобы не
+      // потеряться в путанице между записями.
+      if (line.startsWith('#')) {
+        throw new OutboxParseError(
+          `Строка начинается с "#" но не разбирается как заголовок: "${line}". ` +
+            'Проверь синтаксис: ## id<число> [@ник].',
+        );
+      }
+      records[records.length - 1].lines.push(line);
+    }
   }
 
   if (records.length === 0) {
@@ -116,7 +127,8 @@ function toEntry(record: RawRecord): OutboxEntry {
   if (directive === 'send' && body.length === 0) {
     throw new OutboxParseError(`id${record.tgUserId}: SEND без текста. Нечего отправлять.`);
   }
-  if (body.length > MAX_REPLY_LEN) {
+  // Лимит только для SEND — он один уходит в Telegram. ASK и CLOSE остаются для автора.
+  if (directive === 'send' && body.length > MAX_REPLY_LEN) {
     throw new OutboxParseError(
       `id${record.tgUserId}: текст ${body.length} символов, лимит ${MAX_REPLY_LEN}.`,
     );

@@ -101,4 +101,55 @@ describe('parseOutbox', () => {
     const entries = parseOutbox('## id1\nSEND\n\n\n  текст  \n\n\n');
     expect(entries[0].body).toBe('текст');
   });
+
+  it('битый заголовок ПОСЛЕ валидной записи роняет разбор', () => {
+    // Если наткнулись на ### id2 (неправильный уровень после валидной записи),
+    // это либо ошибка форматирования, либо markdown в теле. Fail-closed.
+    expect(() => parseOutbox('## id1\nSEND\nпривет\n### id2 @foo\nSEND\nпривет2\n')).toThrow(
+      OutboxParseError,
+    );
+  });
+
+  it('невалидный ник в заголовке роняет разбор', () => {
+    // Ник содержит дефис, который не проходит HEADER regexp.
+    // Молча вклеится в тело — ошибка.
+    expect(() => parseOutbox('## id1\nSEND\nпривет\n## id2 @bad-user\nSEND\nпривет2\n')).toThrow(
+      OutboxParseError,
+    );
+  });
+
+  it('строка, начинающаяся с #, внутри тела роняет разбор', () => {
+    // Осознанный компромисс fail-closed: markdown-заголовки в теле редки,
+    // так что ложных срабатываний на реальных текстах почти нет.
+    expect(() => parseOutbox('## id1\nSEND\nпривет\n#хештег\nеще текст\n')).toThrow(
+      OutboxParseError,
+    );
+  });
+
+  it('длинное тело у CLOSE не роняет разбор', () => {
+    // Комментарий для close не уходит в Telegram, так что лимит не нужен.
+    const long = 'я'.repeat(4001);
+    const entries = parseOutbox(`## id1\nCLOSE\n${long}\n`);
+    expect(entries[0].body).toBe(long.trim());
+  });
+
+  it('длинное тело у ASK не роняет разбор', () => {
+    // Вопрос к автору не уходит в Telegram, так что лимит не нужен.
+    const long = 'я'.repeat(4001);
+    const entries = parseOutbox(`## id1\nASK\n${long}\n`);
+    expect(entries[0].body).toBe(long.trim());
+  });
+
+  it('длинное тело у SEND по-прежнему роняет разбор', () => {
+    // Только SEND уходит в Telegram, так что лимит применяется только к нему.
+    const long = 'я'.repeat(4001);
+    expect(() => parseOutbox(`## id1\nSEND\n${long}\n`)).toThrow(OutboxParseError);
+  });
+
+  it('extractRecordIds на тексте с посторонними markdown-заголовками не бросает', () => {
+    // extractRecordIds используется и для inbox-файла, где заголовки
+    // вроде «# Неотвеченное на …» легальны. Не валидируем там.
+    const ids = extractRecordIds('# Заголовок\n## id1\n### Подзаголовок\n## id2\n');
+    expect(ids).toEqual(['1', '2']);
+  });
 });
