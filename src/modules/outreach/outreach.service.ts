@@ -125,8 +125,14 @@ export class OutreachService {
 
   /** Выгрузка неотвеченного в файл: `yarn inbox`. */
   public async inbox(limit: number): Promise<string> {
+    // Стамп снимаем ДО обхода, а не после. Обход идёт минутами (пауза на
+    // каждое чтение истории), и стамп с его конца оказывается позже, чем
+    // сообщения, пришедшие уже во время обхода: guard перед отправкой их не
+    // считает свежими и мы отвечаем на устаревшую реплику. Стамп с начала
+    // ошибается в другую сторону — лишний пропуск, лид уедет в следующий inbox.
+    const name = inboxFileName(new Date());
     const dump = await this.dialogs.collectUnanswered(limit);
-    const path = writeInbox(inboxFileName(new Date()), formatInbox(dump));
+    const path = writeInbox(name, formatInbox(dump));
     return formatInboxSummary(dump, path);
   }
 
