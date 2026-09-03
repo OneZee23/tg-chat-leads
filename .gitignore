@@ -23,3 +23,6 @@ export/
 posts/cold-outreach/text.md
 posts/cold-outreach/body.md
 posts/cold-outreach/images/
+
+# Служебная директория исполнения планов (леджер, брифы, диффы на ревью).
+.superpowers/
