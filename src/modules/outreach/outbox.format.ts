@@ -104,10 +104,11 @@ export function formatOutboxResult(result: OutboxSendResult): string {
 
   if (!result.staleCheck) {
     lines.push('');
+    lines.push('⚠ В имени файла нет стампа выгрузки — свежесть проверять не по чему,');
     lines.push(
-      '⚠ В имени файла нет стампа выгрузки — не проверял, не написал ли человек',
+      `  поэтому ни один SEND ${result.dryRun ? 'не ушёл бы' : 'не ушёл'}: повторный запуск того же файла`,
     );
-    lines.push('  ещё раз после неё. Проверка свежести пропущена.');
+    lines.push('  отправил бы человеку дубль. Переименуй в YYYY-MM-DD-HHMM.md.');
   }
 
   if (result.dryRun) {

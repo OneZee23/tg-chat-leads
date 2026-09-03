@@ -73,9 +73,13 @@ describe('formatOutboxResult', () => {
     expect(out).toContain('ты ответил руками');
   });
 
-  it('без стампа в имени файла честно сообщает, что свежесть не проверена', () => {
+  it('без стампа в имени файла говорит, что SEND не ушёл и как это чинить', () => {
+    // Не «проверка пропущена»: без стампа отправка отказывается слать вовсе,
+    // и человеку нужно знать, что делать дальше.
     const out = formatOutboxResult(result({ staleCheck: false, file: 'вторник.md' }));
     expect(out).toContain('свежест');
+    expect(out).toContain('ни один SEND');
+    expect(out).toContain('YYYY-MM-DD-HHMM.md');
   });
 
   it('ошибка отправки видна и объясняет остановку', () => {

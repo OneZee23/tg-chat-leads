@@ -636,19 +636,58 @@ export class DialogsService {
 
     const pending = new Map(entries.map((e) => [e.tgUserId, e]));
 
-    // ASK ничего не трогает в Telegram — разбираем сразу, не тратя проход.
+    // Всё, для чего Telegram не нужен, разбираем до прохода и в порядке файла.
     for (const entry of entries) {
-      if (entry.directive !== 'ask') continue;
-      pending.delete(entry.tgUserId);
-      result.asked += 1;
-      result.entries.push(sendEntry(entry, 'asked'));
+      // ASK ничего не отправляет: тело — вопрос к автору.
+      if (entry.directive === 'ask') {
+        pending.delete(entry.tgUserId);
+        result.asked += 1;
+        result.entries.push(sendEntry(entry, 'asked'));
+        continue;
+      }
+
+      // CLOSE — это markAnswered по id из файла, диалог для него не нужен.
+      // Пока он ждал прохода, запись, до которой проход не дошёл, оседала в
+      // notFound неотмеченной и всплывала в следующей выгрузке заново.
+      if (entry.directive === 'close') {
+        pending.delete(entry.tgUserId);
+        result.closed += 1;
+        if (!options.dryRun) {
+          try {
+            await this.leads.markAnswered(entry.tgUserId);
+          } catch (err) {
+            this.logger.warn(
+              `CLOSE id${entry.tgUserId}: markAnswered упал: ${describeError(err)}`,
+            );
+          }
+        }
+        result.entries.push(sendEntry(entry, options.dryRun ? 'preview' : 'closed'));
+        continue;
+      }
+
+      // SEND без стампа в имени файла: fail-closed. Если человек ответил на
+      // наш ответ («спасибо!»), неотвеченное снова непусто, а курсор стоит на
+      // нашем же сообщении — от повторной отправки того же текста защищает
+      // ровно сравнение со стампом. Нет стампа — нет защиты.
+      if (options.dumpedAtSec === null) {
+        pending.delete(entry.tgUserId);
+        result.skipped += 1;
+        result.entries.push(
+          sendEntry(
+            entry,
+            'skipped',
+            'в имени файла нет стампа, повторный запуск мог бы отправить дубль — ' +
+              'переименуй в YYYY-MM-DD-HHMM.md',
+          ),
+        );
+      }
     }
 
     // Ранний выход ДО входа в цикл: `for await` дёрнул бы `iterDialogs` и
     // сходил в Telegram за первой страницей диалогов ещё до первой проверки в
-    // теле. Файл из одних ASK не должен трогать сеть вовсе.
+    // теле. Файл, в котором отправлять нечего, не должен трогать сеть вовсе.
     if (pending.size === 0) {
-      this.logger.log(`Outbox ${options.file}: только ASK, Telegram не трогали`);
+      this.logger.log(`Outbox ${options.file}: отправлять нечего, Telegram не трогали`);
       return result;
     }
 
@@ -667,16 +706,19 @@ export class DialogsService {
       if (!entry) continue;
       pending.delete(id);
 
-      if (entry.directive === 'close') {
-        result.closed += 1;
-        if (!options.dryRun) {
-          try {
-            await this.leads.markAnswered(id);
-          } catch (err) {
-            this.logger.warn(`CLOSE id${id}: markAnswered упал: ${describeError(err)}`);
-          }
-        }
-        result.entries.push(sendEntry(entry, options.dryRun ? 'preview' : 'closed'));
+      // Кому писать — решает база, а не файл: человека могли пометить
+      // skip/rejected уже после выгрузки, а опечатка в цифре id уводит ответ
+      // в посторонний диалог. Проверяем до чтения истории: оно дорогое.
+      const candidate = candidates.get(id);
+      if (!candidate) {
+        result.skipped += 1;
+        result.entries.push(
+          sendEntry(
+            entry,
+            'skipped',
+            'нет среди кандидатов: помечен skip/rejected или id не тот',
+          ),
+        );
         continue;
       }
 
@@ -695,8 +737,7 @@ export class DialogsService {
         continue;
       }
 
-      const candidate = candidates.get(id);
-      const contactedAtSec = candidate?.contactedAt
+      const contactedAtSec = candidate.contactedAt
         ? Math.floor(candidate.contactedAt.getTime() / 1000)
         : 0;
       const slice = sliceUnanswered(
