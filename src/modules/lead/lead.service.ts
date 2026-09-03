@@ -22,6 +22,12 @@ export interface UpsertLeadInput {
   sampleText: string | null;
 }
 
+export interface DialogCandidate {
+  tgUserId: string;
+  contactedAt: Date | null;
+  sampleText: string | null;
+}
+
 @Injectable()
 export class LeadService {
   constructor(
@@ -535,6 +541,40 @@ export class LeadService {
            AND status IN ('contacted', 'replied')`,
       );
     return new Map(rows.map((r) => [String(r.tg_user_id), r.contacted_at]));
+  }
+
+  /**
+   * Кандидаты для выгрузки неотвеченного: все, кому мы писали и кого руками
+   * не закрыли. `sample_text` нужен, чтобы в выгрузке было видно, кто человек
+   * и что преподаёт, — без этого ответ пишется вслепую.
+   *
+   * Отдельный метод, а не расширение `getAutoReplyCandidates()`: у того курсор
+   * стоит на `contacted_at`, и если пустить его по тем же кандидатам со
+   * сдвинутым курсором, короткий позитив во ВТОРОМ ходе диалога («супер,
+   * спасибо!») получит `AUTO_POSITIVE` повторно — почти дословный дубль того,
+   * что мы уже сказали. Шаблонный автоответ остаётся одноходовым.
+   */
+  public async getDialogCandidates(): Promise<Map<string, DialogCandidate>> {
+    const rows: Array<{
+      tg_user_id: string;
+      contacted_at: Date | null;
+      sample_text: string | null;
+    }> = await this.repo.query(
+      `SELECT tg_user_id, contacted_at, sample_text FROM tg_lead
+       WHERE contacted_at IS NOT NULL
+         AND status NOT IN ('skip', 'rejected')`,
+    );
+
+    return new Map(
+      rows.map((r) => [
+        String(r.tg_user_id),
+        {
+          tgUserId: String(r.tg_user_id),
+          contactedAt: r.contacted_at,
+          sampleText: r.sample_text,
+        },
+      ]),
+    );
   }
 
   /** Мы ответили человеку (шаблоном или руками): → answered. */
