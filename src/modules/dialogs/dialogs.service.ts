@@ -2,10 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Api } from 'telegram';
 import { sleep } from '@common/utils/sleep';
 import { DialogsConfig } from '@modules/dialogs/dialogs.config';
+import { HistoryMessage, sliceUnanswered } from '@modules/dialogs/unanswered';
 import { LeadService } from '@modules/lead/lead.service';
+import { InboxDialog, InboxDump, InboxMessage } from '@modules/outreach/inbox.format';
 import { autoReplyDecision } from '@modules/outreach/reply-draft';
 import { AutoAction, ReplyKind } from '@modules/outreach/reply-draft';
 import { ScannerConfig } from '@modules/scanner/scanner.config';
+import { buildHook } from '@modules/sender/outreach-message';
 import { TelegramClientService } from '@modules/telegram/telegram-client.service';
 
 export interface AutoReplyEntry {
@@ -455,6 +458,103 @@ export class DialogsService {
   }
 
   /**
+   * Выгрузка всего, что осталось без нашего ответа.
+   *
+   * Дорогая часть — чтение истории, оно же главный источник FloodWait.
+   * Поэтому дешёвый пред-фильтр: если последнее сообщение диалога наше,
+   * отвечать нечего и историю читать незачем. Это отсекает почти всех.
+   */
+  public async collectUnanswered(limit: number): Promise<InboxDump> {
+    const client = this.telegram.getClient();
+    const candidates = await this.leads.getDialogCandidates();
+
+    const dump: InboxDump = {
+      createdAt: formatStamp(new Date()),
+      dialogsSeen: 0,
+      dialogs: [],
+      trivial: [],
+      stoppedBecause: 'кандидаты закончились',
+    };
+
+    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+      if (dump.dialogs.length + dump.trivial.length >= limit) {
+        dump.stoppedBecause = `упёрлись в лимит выгрузки (${limit})`;
+        break;
+      }
+      if (!dialog.isUser) continue;
+      const entity = dialog.entity;
+      if (!(entity instanceof Api.User)) continue;
+
+      const candidate = candidates.get(entity.id.toString());
+      if (!candidate) continue;
+      dump.dialogsSeen += 1;
+
+      // Пред-фильтр: последнее сообщение наше или пустое — читать историю не за чем.
+      const last = dialog.message;
+      if (!last || last.out !== false) continue;
+      if ((last.message ?? '').trim().length === 0) continue;
+
+      let messages;
+      try {
+        messages = await client.getMessages(entity, { limit: this.config.deepLimit });
+        await sleep(this.config.deepDelayMs);
+      } catch (err) {
+        // Историю не прочитали — в выгрузку не кладём: писать ответ вслепую
+        // хуже, чем не ответить сейчас и увидеть человека в следующий раз.
+        this.logger.warn(
+          `Выгрузка: id${candidate.tgUserId} — история недоступна: ${describeError(err)}`,
+        );
+        continue;
+      }
+
+      const contactedAtSec = candidate.contactedAt
+        ? Math.floor(candidate.contactedAt.getTime() / 1000)
+        : 0;
+      const slice = sliceUnanswered(
+        messages.map((m: Api.Message): HistoryMessage => ({
+          out: m.out === true,
+          date: m.date,
+          message: m.message ?? '',
+        })),
+        contactedAtSec,
+      );
+
+      if (slice.incoming.length === 0) continue;
+
+      const newest = slice.incoming[slice.incoming.length - 1];
+      const decision = autoReplyDecision(newest.message);
+
+      const entry: InboxDialog = {
+        tgUserId: candidate.tgUserId,
+        username: entity.username ?? null,
+        hook: buildHook(candidate.sampleText),
+        about: candidate.sampleText,
+        heuristic: {
+          kind: decision.kind,
+          action: decision.action,
+          reason: decision.reason,
+        },
+        history: slice.history.map((m): InboxMessage => ({
+          out: m.out,
+          at: formatStamp(new Date(m.date * 1000)),
+          text: m.message,
+          fresh: !m.out && m.date > slice.cursorSec,
+        })),
+      };
+
+      // Эвристика уверена, что ответа не требует, — в отдельный блок, чтобы
+      // не тратить внимание на пятьдесят «ок».
+      if (decision.action === 'clear') dump.trivial.push(entry);
+      else dump.dialogs.push(entry);
+    }
+
+    this.logger.log(
+      `Выгрузка: нужен ответ ${dump.dialogs.length}, тривиальных ${dump.trivial.length}`,
+    );
+    return dump;
+  }
+
+  /**
    * Есть ли в переписке хоть одно моё сообщение.
    *
    * Берём обычную историю, а не серверный фильтр `fromUser: 'me'`: в личных
@@ -513,4 +613,9 @@ function resolveType(entity: Api.Chat | Api.Channel): DiscoveredChat['type'] {
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function formatStamp(at: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${at.getFullYear()}-${p(at.getMonth() + 1)}-${p(at.getDate())} ${p(at.getHours())}:${p(at.getMinutes())}`;
 }
