@@ -4,6 +4,7 @@ import {
   formatInbox,
   formatInboxSummary,
 } from '@modules/outreach/inbox.format';
+import { extractRecordIds } from '@modules/outreach/outbox.parse';
 
 function dialog(over: Partial<InboxDialog> = {}): InboxDialog {
   return {
@@ -93,5 +94,25 @@ describe('formatInboxSummary', () => {
     const out = formatInboxSummary(dump(), '/repo/inbox/2026-09-03-1430.md');
     expect(out).toContain('/repo/inbox/2026-09-03-1430.md');
     expect(out).toContain('yarn outbox');
+  });
+});
+
+describe('контракт с парсером outbox', () => {
+  // Единственное место, где сходятся два файла: рендер выгрузки пишет
+  // заголовки, регулярка парсера их читает. Разъедутся — ассистент скопирует
+  // заголовки в outbox, а разбор их не увидит: тихо не уйдёт ни один ответ.
+  it('id из отрендеренной выгрузки возвращаются парсером', () => {
+    const rendered = formatInbox(
+      dump({
+        dialogs: [
+          dialog(),
+          // Без ника — у части людей его нет вовсе, а ключ всё равно id.
+          dialog({ tgUserId: '987654321', username: null }),
+        ],
+        trivial: [dialog({ tgUserId: '555555555', username: 'quick' })],
+      }),
+    );
+
+    expect(extractRecordIds(rendered)).toEqual(['123456789', '987654321', '555555555']);
   });
 });
