@@ -86,10 +86,18 @@ export function formatOutboxResult(result: OutboxSendResult): string {
   });
 
   lines.push('', '—'.repeat(60));
+  // Время глаголов одно на весь блок: «Закрыто: 3» под заголовком
+  // ПРЕДПРОСМОТР читается как уже сделанное, хотя не сделано ничего.
   lines.push(`${result.dryRun ? 'Ушло бы' : 'Отправлено'}: ${result.sent}`);
-  lines.push(`Закрыто без ответа: ${result.closed}`);
-  lines.push(`Оставлено тебе (ASK): ${result.asked}`);
-  lines.push(`Пропущено (причина у записи): ${result.skipped}`);
+  lines.push(
+    `${result.dryRun ? 'Закрыл бы без ответа' : 'Закрыто без ответа'}: ${result.closed}`,
+  );
+  lines.push(
+    `${result.dryRun ? 'Осталось бы тебе (ASK)' : 'Оставлено тебе (ASK)'}: ${result.asked}`,
+  );
+  lines.push(
+    `${result.dryRun ? 'Пропустил бы' : 'Пропущено'} (причина у записи): ${result.skipped}`,
+  );
   // Молчаливая потеря лида — ровно то, от чего мы уходим, поэтому цифра
   // печатается всегда, даже нулевая.
   lines.push(

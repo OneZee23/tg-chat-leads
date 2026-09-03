@@ -34,7 +34,27 @@ describe('formatOutboxResult', () => {
   });
 
   it('неразобранное (ASK) видно в итоге — иначе теряется молча', () => {
-    expect(formatOutboxResult(result())).toMatch(/Оставлено тебе.*1/);
+    expect(formatOutboxResult(result({ dryRun: false }))).toMatch(/Оставлено тебе.*1/);
+    expect(formatOutboxResult(result())).toMatch(/тебе \(ASK\).*1/);
+  });
+
+  it('в предпросмотре итог целиком в будущем времени', () => {
+    // «Закрыто без ответа: 1» под заголовком ПРЕДПРОСМОТР читается как уже
+    // сделанное, хотя не сделано ничего.
+    const out = formatOutboxResult(result({ skipped: 1 }));
+    expect(out).not.toMatch(/Закрыто без ответа/);
+    expect(out).not.toMatch(/Оставлено тебе/);
+    expect(out).not.toMatch(/Пропущено/);
+    expect(out).toContain('Закрыл бы без ответа');
+    expect(out).toContain('Осталось бы тебе');
+    expect(out).toContain('Пропустил бы');
+  });
+
+  it('боевой прогон отчитывается в прошедшем', () => {
+    const out = formatOutboxResult(result({ dryRun: false, skipped: 1 }));
+    expect(out).toContain('Закрыто без ответа');
+    expect(out).toContain('Оставлено тебе');
+    expect(out).toContain('Пропущено');
   });
 
   it('диалоги из выгрузки, которых нет в outbox, названы вслух', () => {
