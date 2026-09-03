@@ -703,7 +703,15 @@ export class DialogsService {
       }
 
       try {
-        await client.sendMessage(dialogEntity, { message: entry.body });
+        // parseMode: false — тело писал ассистент В MARKDOWN-ФАЙЛ, где `**`,
+        // `~~` и бэктики родная разметка. Парсер GramJS (он включён по
+        // умолчанию) вырезает непарный делимитер молча, и человек получает не
+        // те байты, которые автор вычитал. Глобально не выключаем: холодное
+        // письмо в sender.service шлётся из body.md и на разметку опирается.
+        await client.sendMessage(dialogEntity, {
+          message: entry.body,
+          parseMode: false,
+        });
       } catch (err) {
         const message = describeError(err);
         result.entries.push(sendEntry(entry, 'failed', message));
