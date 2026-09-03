@@ -611,6 +611,14 @@ export class DialogsService {
       result.entries.push(sendEntry(entry, 'asked'));
     }
 
+    // Ранний выход ДО входа в цикл: `for await` дёрнул бы `iterDialogs` и
+    // сходил в Telegram за первой страницей диалогов ещё до первой проверки в
+    // теле. Файл из одних ASK не должен трогать сеть вовсе.
+    if (pending.size === 0) {
+      this.logger.log(`Outbox ${options.file}: только ASK, Telegram не трогали`);
+      return result;
+    }
+
     for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
       if (pending.size === 0) break;
       if (result.sent >= cap) {
