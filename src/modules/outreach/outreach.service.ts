@@ -11,6 +11,23 @@ import {
   formatAutoReplyResult,
   formatRepliesWorklist,
 } from '@modules/outreach/replies.format';
+import { formatInbox, formatInboxSummary } from '@modules/outreach/inbox.format';
+import { formatOutboxResult } from '@modules/outreach/outbox.format';
+import {
+  OutboxEntry,
+  OutboxParseError,
+  extractRecordIds,
+  parseOutbox,
+} from '@modules/outreach/outbox.parse';
+import {
+  inboxFileName,
+  newestOutboxName,
+  parseDumpTimestamp,
+  readInbox,
+  readOutbox,
+  writeInbox,
+  UnsafeFileNameError,
+} from '@modules/outreach/reply-files';
 import { FloodWaitTracker } from '@modules/telegram/flood-wait.tracker';
 
 /**
@@ -104,5 +121,75 @@ export class OutreachService {
       return `\nНикого не нашёл по этим никам. Проверь написание.\n`;
     }
     return `\nПомечено как ${status}: ${affected}\n`;
+  }
+
+  /** Выгрузка неотвеченного в файл: `yarn inbox`. */
+  public async inbox(limit: number): Promise<string> {
+    const dump = await this.dialogs.collectUnanswered(limit);
+    const path = writeInbox(inboxFileName(new Date()), formatInbox(dump));
+    return formatInboxSummary(dump, path);
+  }
+
+  /**
+   * Отправка ответов из outbox: `yarn outbox` (предпросмотр) и
+   * `yarn outbox:send`. Без имени файла берём самый свежий — так у команды
+   * без аргументов есть осмысленное поведение.
+   */
+  public async outboxSend(
+    file: string | undefined,
+    send: boolean,
+    limit: number,
+  ): Promise<string> {
+    const name = file ?? newestOutboxName();
+    if (!name) {
+      return '\nВ outbox/ нет ни одного .md — сначала попроси ассистента написать ответы по файлу из inbox/.\n';
+    }
+
+    let raw: string;
+    try {
+      raw = readOutbox(name);
+    } catch (err) {
+      if (err instanceof UnsafeFileNameError) return `\n${err.message}\n`;
+      throw err;
+    }
+
+    let entries;
+    try {
+      entries = parseOutbox(raw);
+    } catch (err) {
+      // Разбор упал — значит не отправлено ничего. Это и есть задуманное
+      // поведение, поэтому текст ошибки печатаем как обычный ответ.
+      if (err instanceof OutboxParseError) {
+        return `\nФайл outbox/${name} не разобран, ничего не отправлено:\n${err.message}\n`;
+      }
+      throw err;
+    }
+
+    const result = await this.dialogs.sendPreparedReplies(entries, {
+      dryRun: !send,
+      limit,
+      file: name,
+      dumpedAtSec: parseDumpTimestamp(name),
+      untouched: this.countUntouched(name, entries),
+    });
+    return formatOutboxResult(result);
+  }
+
+  /**
+   * Сколько диалогов из выгрузки остались без записи в outbox.
+   *
+   * Считается по самому inbox-файлу, а не по результату прохода: иначе
+   * человек, для которого ответ просто не написали, нигде не всплывёт —
+   * ровно та молчаливая потеря лида, от которой мы уходим. Формат заголовка
+   * у inbox и outbox один, поэтому хватает `extractRecordIds`.
+   *
+   * null — выгрузки на диске уже нет: сверять не по чему, и итог скажет это
+   * прямым текстом вместо честного на вид нуля.
+   */
+  private countUntouched(name: string, entries: OutboxEntry[]): number | null {
+    const dump = readInbox(name);
+    if (dump === null) return null;
+    const answered = new Set(entries.map((e) => e.tgUserId));
+    return extractRecordIds(dump).filter((id) => !answered.has(id)).length;
   }
 }
