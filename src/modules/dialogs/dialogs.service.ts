@@ -524,6 +524,11 @@ export class DialogsService {
       const newest = slice.incoming[slice.incoming.length - 1];
       const decision = autoReplyDecision(newest.message);
 
+      // Set по ссылкам, а не повторение предиката sliceUnanswered: incoming
+      // собран как history.filter(...), объекты те же самые, поэтому
+      // членство проверяется точно и не может разъехаться с курсором.
+      const isFresh = new Set(slice.incoming);
+
       const entry: InboxDialog = {
         tgUserId: candidate.tgUserId,
         username: entity.username ?? null,
@@ -538,7 +543,7 @@ export class DialogsService {
           out: m.out,
           at: formatStamp(new Date(m.date * 1000)),
           text: m.message,
-          fresh: !m.out && m.date > slice.cursorSec,
+          fresh: isFresh.has(m),
         })),
       };
 
