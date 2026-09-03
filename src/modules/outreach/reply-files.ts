@@ -94,7 +94,7 @@ export function readOutbox(name: string, baseDir = process.cwd()): string {
   const path = join(baseDir, OUTBOX_DIR, name);
   if (!existsSync(path)) {
     throw new UnsafeFileNameError(
-      `Файла ${OUTBOX_DIR}/${name} нет. Что лежит рядом: ${listOutbox(baseDir).join(', ') || '(папка пуста)'}`,
+      `Файла ${OUTBOX_DIR}/${name} нет. Что лежит рядом: ${listOutboxNames(baseDir).join(', ') || '(папка пуста)'}`,
     );
   }
   return readFileSync(path, 'utf8');
@@ -102,7 +102,7 @@ export function readOutbox(name: string, baseDir = process.cwd()): string {
 
 /** Самый свежий файл — чтобы `yarn outbox` работал без аргументов. */
 export function newestOutboxName(baseDir = process.cwd()): string | null {
-  const names = listOutbox(baseDir);
+  const names = listOutboxNames(baseDir);
   // Отбираем только файлы с валидными стампами: имя без стампа не может быть
   // «самым свежим», его время неизвестно.
   const valid = names.filter((n) => parseDumpTimestamp(n) !== null);
@@ -117,7 +117,12 @@ export function newestOutboxName(baseDir = process.cwd()): string | null {
     .reverse()[0];
 }
 
-function listOutbox(baseDir: string): string[] {
+/**
+ * Что вообще лежит в outbox/. Наружу — чтобы отличить «ассистент ничего не
+ * написал» от «файлы есть, но ни у одного нет стампа в имени»: второе звучит
+ * иначе и чинится переименованием.
+ */
+export function listOutboxNames(baseDir = process.cwd()): string[] {
   const dir = join(baseDir, OUTBOX_DIR);
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((n) => n.endsWith('.md'));

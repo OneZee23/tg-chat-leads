@@ -21,6 +21,7 @@ import {
 } from '@modules/outreach/outbox.parse';
 import {
   inboxFileName,
+  listOutboxNames,
   newestOutboxName,
   parseDumpTimestamp,
   readInbox,
@@ -155,6 +156,20 @@ export class OutreachService {
 
     const name = file ?? newestOutboxName();
     if (!name) {
+      const present = listOutboxNames();
+      if (present.length > 0) {
+        // «Нет ни одного .md» здесь было бы враньём и читалось как «ассистент
+        // ничего не написал». Файлы есть, просто самый свежий из имён без
+        // стампа не выбрать.
+        return (
+          `\nВ outbox/ есть .md, но ни у одного нет стампа выгрузки в имени ` +
+          `(YYYY-MM-DD-HHMM.md), а без него не понять, какой свежее. Лежат: ` +
+          `${present.join(', ')}.\n` +
+          `Передай имя явно: yarn outbox <файл>. Но SEND из файла без стампа не ` +
+          `уйдёт — проверить, не написал ли человек после выгрузки, будет не по ` +
+          `чему. Надёжнее переименовать файл в имя его выгрузки.\n`
+        );
+      }
       return '\nВ outbox/ нет ни одного .md — сначала попроси ассистента написать ответы по файлу из inbox/.\n';
     }
 
