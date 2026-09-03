@@ -37,6 +37,16 @@ export interface AutoReplyResult {
   entries: AutoReplyEntry[];
 }
 
+export interface SendPreparedOptions {
+  dryRun: boolean;
+  limit: number;
+  file: string;
+  /** Момент выгрузки из имени файла; null — стампа в имени нет. */
+  dumpedAtSec: number | null;
+  /** Посчитано вызывающим по самой выгрузке; null — её нет на диске. */
+  untouched: number | null;
+}
+
 export interface DiscoveredChat {
   /** Готовая строка для SCAN_CHATS. */
   ref: string;
@@ -64,6 +74,9 @@ export interface ContactedSyncResult {
 @Injectable()
 export class DialogsService {
   private readonly logger = new Logger(DialogsService.name);
+
+  /** Идёт ли прогон outbox прямо сейчас. См. sendPreparedReplies. */
+  private sending = false;
 
   constructor(
     private readonly config: DialogsConfig,
@@ -563,6 +576,11 @@ export class DialogsService {
     return dump;
   }
 
+  /** Идёт ли прогон outbox: параллельно запускать нельзя, см. ниже. */
+  public isSending(): boolean {
+    return this.sending;
+  }
+
   /**
    * Отправка ответов, подготовленных в outbox.
    *
@@ -570,20 +588,33 @@ export class DialogsService {
    * предпросмотре. Лишние запросы того стоят: предпросмотр, который проверяет
    * не то же, что боевой прогон, показывает не то, что произойдёт.
    *
-   * Отсюда бесплатная идемпотентность: повторный запуск того же файла увидит
-   * наше исходящее после их входящего и пропустит всё. Таблица отправленных
-   * ответов не нужна.
+   * Идемпотентность держится на двух вещах, а не на одном guard'е по истории:
+   * guard закрывает случай «человек больше ничего не написал», а сравнение со
+   * стампом выгрузки — случай «написал». Стампа в имени файла нет — ни один
+   * SEND не уходит: дешевле отложить лид до следующей выгрузки, чем прислать
+   * ему второе такое же сообщение.
+   *
+   * Латч на время прогона: два параллельных запуска успевают оба прочитать
+   * историю до того, как первый отправит, и guard пропускает обоих. Тот же
+   * приём, что у скана (`ScannerService.isRunning`).
    */
   public async sendPreparedReplies(
     entries: OutboxEntry[],
-    options: {
-      dryRun: boolean;
-      limit: number;
-      file: string;
-      dumpedAtSec: number | null;
-      /** Посчитано вызывающим по самой выгрузке; null — её нет на диске. */
-      untouched: number | null;
-    },
+    options: SendPreparedOptions,
+  ): Promise<OutboxSendResult> {
+    this.sending = true;
+    try {
+      return await this.runPreparedReplies(entries, options);
+    } finally {
+      // Снимаем на любом выходе, включая брошенное исключение: залипший латч
+      // означает «отправка больше не запускается до перезапуска процесса».
+      this.sending = false;
+    }
+  }
+
+  private async runPreparedReplies(
+    entries: OutboxEntry[],
+    options: SendPreparedOptions,
   ): Promise<OutboxSendResult> {
     const client = this.telegram.getClient();
     const candidates = await this.leads.getDialogCandidates();

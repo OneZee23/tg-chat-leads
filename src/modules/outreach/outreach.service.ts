@@ -140,6 +140,13 @@ export class OutreachService {
     send: boolean,
     limit: number,
   ): Promise<string> {
+    // Два прогона внахлёст успевают оба прочитать историю до того, как первый
+    // отправит, и guard по свежести пропускает обоих: человек получает дубль.
+    // Ровно та же защита, что у скана выше.
+    if (this.dialogs.isSending()) {
+      return '\nПрогон outbox уже идёт. Подожди и повтори — параллельно запускать нельзя.\n';
+    }
+
     const name = file ?? newestOutboxName();
     if (!name) {
       return '\nВ outbox/ нет ни одного .md — сначала попроси ассистента написать ответы по файлу из inbox/.\n';
