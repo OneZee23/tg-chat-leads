@@ -2010,7 +2010,7 @@ git commit -m "feat: ручки inbox/outbox, скрипты и гитигнор
 - `teach-track-frontend/src/pages/Landing.tsx` — что обещано публично;
 - `teach-track-frontend/src/pages/Roadmap.tsx` — граница «есть» / «будет».
   Именно на ней ответ превращается в обещание, которого никто не давал;
-- CHANGELOG в `teach-track-backend` — что реально уехало в прод.
+- `teach-track-frontend/CHANGELOG.md` — что реально уехало в прод.
 
 Списка фич здесь нет намеренно: он устареет молча, а код — нет.
 
