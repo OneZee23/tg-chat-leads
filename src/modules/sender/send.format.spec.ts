@@ -110,6 +110,13 @@ describe('formatSendReport', () => {
     expect(out).toContain('yarn send:go');
   });
 
+  it('в предпросмотре «ушло бы» совпадает с длиной списка', () => {
+    // Сервис не трогает report.sent в dry-run: «отправлено» там честно ноль.
+    // Но для человека строка «Ушло бы: 0» под списком из трёх имён — ложь.
+    const out = formatSendReport({ ...report, sent: 0 });
+    expect(out).toMatch(/Ушло бы: 3/);
+  });
+
   it('боевой прогон не предлагает отправить ещё раз', () => {
     const out = formatSendReport({ ...report, dryRun: false, entries: [] });
     expect(out).not.toContain('yarn send:go');

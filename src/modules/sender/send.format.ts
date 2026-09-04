@@ -108,7 +108,11 @@ export function formatSendReport(report: SendReport): string {
 
   const b = report.dailyBudget;
   lines.push('', '—'.repeat(60));
-  lines.push(`${report.dryRun ? 'Ушло бы' : 'Отправлено'}: ${report.sent}`);
+  // В dry-run сервис намеренно не трогает `sent` — отправлено действительно
+  // ноль. Но под списком из пяти имён строка «Ушло бы: 0» читается как
+  // ошибка, поэтому здесь считаем по самому списку.
+  const wouldSend = report.entries.filter((e) => e.result === 'dry-run').length;
+  lines.push(report.dryRun ? `Ушло бы: ${wouldSend}` : `Отправлено: ${report.sent}`);
   if (report.failed > 0) lines.push(`Ошибок: ${report.failed}`);
   if (report.skipped > 0) lines.push(`Пропущено: ${report.skipped}`);
   lines.push(`Суточный бюджет: ${b.used} из ${b.limit}, осталось ${b.remaining}`);
