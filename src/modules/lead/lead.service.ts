@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LeadEntity, LeadStatus } from '@modules/lead/lead.entity';
+import { leadQueueScoreSql } from '@modules/lead/queue-order';
 import { ListLeadsQueryDto } from '@modules/lead/dto/list-leads.query.dto';
 import { In, Repository } from 'typeorm';
 
@@ -240,6 +241,9 @@ export class LeadService {
     const total = await qb.getCount();
     const items = await qb
       .orderBy('lead.score', 'DESC')
+      // Тот же ключ, что и в claimForSending: предпросмотр обязан показывать
+      // тех же людей, которым реально уйдёт письмо.
+      .addOrderBy(leadQueueScoreSql('lead'), 'DESC')
       .addOrderBy('lead.lastSeenAt', 'DESC')
       .limit(limit)
       .getMany();
@@ -293,7 +297,7 @@ export class LeadService {
         `
         SELECT id FROM tg_lead
         WHERE status = 'new' AND username IS NOT NULL
-        ORDER BY score DESC, last_seen_at DESC
+        ORDER BY score DESC, ${leadQueueScoreSql()} DESC, last_seen_at DESC
         LIMIT $1
         FOR UPDATE SKIP LOCKED
         `,
