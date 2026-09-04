@@ -64,7 +64,9 @@ export function formatAutoReplyResult(result: {
     error?: string;
   }>;
 }): string {
-  const head = result.dryRun ? 'ПРЕДПРОСМОТР (ничего не отправлено)' : 'Авто-разбор выполнен';
+  const head = result.dryRun
+    ? 'ПРЕДПРОСМОТР (ничего не отправлено)'
+    : 'Авто-разбор выполнен';
   const lines: string[] = ['', head, ''];
 
   // Что делаем с каждым, человекочитаемо.
@@ -75,16 +77,21 @@ export function formatAutoReplyResult(result: {
 
   result.entries.forEach((e, i) => {
     const nick = e.username ? `@${e.username}` : '(без ника)';
-    const what = e.result === 'failed' ? `ОШИБКА: ${e.error ?? ''}` : label[e.action] ?? e.action;
+    const what =
+      e.result === 'failed' ? `ОШИБКА: ${e.error ?? ''}` : (label[e.action] ?? e.action);
     lines.push(`${String(i + 1).padStart(2, ' ')}. ${nick}  ·  ${e.kind}  ·  ${what}`);
     lines.push(`    он: ${e.reply}`);
   });
 
   lines.push('');
   lines.push('—'.repeat(60));
-  lines.push(`${result.dryRun ? 'Ушло бы шаблонов' : 'Отправлено шаблонов'}: ${result.sent}`);
+  lines.push(
+    `${result.dryRun ? 'Ушло бы шаблонов' : 'Отправлено шаблонов'}: ${result.sent}`,
+  );
   lines.push(`Закрыто без ответа (нейтральные): ${result.cleared}`);
-  lines.push(`Оставлено тебе (вопросы, просьбы, фидбек): ${result.manual}  →  yarn replies`);
+  lines.push(
+    `Оставлено тебе (вопросы, просьбы, фидбек): ${result.manual}  →  yarn replies`,
+  );
   lines.push(`Остановка: ${result.stoppedBecause}`);
   if (result.dryRun) {
     lines.push('');

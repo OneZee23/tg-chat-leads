@@ -117,7 +117,8 @@ export function classifyReply(text: string): ReplyKind {
   // Отказ: явные фразы + отрицание позитива («не хочу», «не буду пробовать»).
   // «спасибо, не интересует» содержит и «спасибо» (позитив), но по сути нет.
   const declineHit =
-    DECLINE_MARKERS.some((m) => normalized.includes(m)) || DECLINE_NEGATION.test(normalized);
+    DECLINE_MARKERS.some((m) => normalized.includes(m)) ||
+    DECLINE_NEGATION.test(normalized);
   if (declineHit) {
     // Отказ-фраза рядом с сильной похвалой — двусмысленно («супер, удобно, не
     // нужно разбираться»). Не режем в отказ, отдаём человеку.
@@ -266,10 +267,23 @@ export function autoReplyDecision(text: string): AutoDecision {
     return { action: 'manual', text: null, kind, reason: 'вопрос — нужен твой ответ' };
   }
   if (REQUEST_MARKERS.some((m) => normalized.includes(m))) {
-    return { action: 'manual', text: null, kind, reason: 'просит ссылку/гайд — ответь с онбордингом' };
+    return {
+      action: 'manual',
+      text: null,
+      kind,
+      reason: 'просит ссылку/гайд — ответь с онбордингом',
+    };
   }
-  if (normalized.length > SUBSTANTIVE_LEN || FEEDBACK_MARKERS.some((m) => normalized.includes(m))) {
-    return { action: 'manual', text: null, kind, reason: 'развёрнутый ответ/фидбек — ответь лично' };
+  if (
+    normalized.length > SUBSTANTIVE_LEN ||
+    FEEDBACK_MARKERS.some((m) => normalized.includes(m))
+  ) {
+    return {
+      action: 'manual',
+      text: null,
+      kind,
+      reason: 'развёрнутый ответ/фидбек — ответь лично',
+    };
   }
   if (kind === 'decline') {
     return { action: 'send', text: AUTO_DECLINE, kind, reason: 'отказ' };
@@ -280,7 +294,17 @@ export function autoReplyDecision(text: string): AutoDecision {
   // Нейтральное. Короткое «ок/спасибо» — закрыть. Длиннее — тебе: там может
   // быть активный юзер, баг или предложение отзыва.
   if (normalized.length <= NEUTRAL_CLEAR_MAXLEN) {
-    return { action: 'clear', text: null, kind, reason: 'короткое «ок/спасибо» — ответа не требует' };
+    return {
+      action: 'clear',
+      text: null,
+      kind,
+      reason: 'короткое «ок/спасибо» — ответа не требует',
+    };
   }
-  return { action: 'manual', text: null, kind, reason: 'содержательное нейтральное — глянь сам' };
+  return {
+    action: 'manual',
+    text: null,
+    kind,
+    reason: 'содержательное нейтральное — глянь сам',
+  };
 }
