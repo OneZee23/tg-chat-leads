@@ -1,11 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Api } from 'telegram';
-import { sleep } from '@common/utils/sleep';
+import { sleep, sleepJitter } from '@common/utils/sleep';
 import { DialogsConfig } from '@modules/dialogs/dialogs.config';
+import { HistoryMessage, sliceUnanswered } from '@modules/dialogs/unanswered';
 import { LeadService } from '@modules/lead/lead.service';
+import { InboxDialog, InboxDump, InboxMessage } from '@modules/outreach/inbox.format';
+import { OutboxSendEntry, OutboxSendResult } from '@modules/outreach/outbox.format';
+import { OutboxEntry } from '@modules/outreach/outbox.parse';
 import { autoReplyDecision } from '@modules/outreach/reply-draft';
 import { AutoAction, ReplyKind } from '@modules/outreach/reply-draft';
 import { ScannerConfig } from '@modules/scanner/scanner.config';
+import { buildHook } from '@modules/sender/outreach-message';
 import { TelegramClientService } from '@modules/telegram/telegram-client.service';
 
 export interface AutoReplyEntry {
@@ -30,6 +35,16 @@ export interface AutoReplyResult {
   manual: number;
   stoppedBecause: string;
   entries: AutoReplyEntry[];
+}
+
+export interface SendPreparedOptions {
+  dryRun: boolean;
+  limit: number;
+  file: string;
+  /** Момент выгрузки из имени файла; null — стампа в имени нет. */
+  dumpedAtSec: number | null;
+  /** Посчитано вызывающим по самой выгрузке; null — её нет на диске. */
+  untouched: number | null;
 }
 
 export interface DiscoveredChat {
@@ -59,6 +74,9 @@ export interface ContactedSyncResult {
 @Injectable()
 export class DialogsService {
   private readonly logger = new Logger(DialogsService.name);
+
+  /** Идёт ли прогон outbox прямо сейчас. См. sendPreparedReplies. */
+  private sending = false;
 
   constructor(
     private readonly config: DialogsConfig,
@@ -405,7 +423,9 @@ export class DialogsService {
           try {
             await this.leads.markAnswered(id);
           } catch (err) {
-            this.logger.warn(`Авто-закрытие id${id}: markAnswered упал: ${describeError(err)}`);
+            this.logger.warn(
+              `Авто-закрытие id${id}: markAnswered упал: ${describeError(err)}`,
+            );
           }
         }
         result.entries.push({ ...entry, result: options.dryRun ? 'preview' : 'cleared' });
@@ -450,6 +470,395 @@ export class DialogsService {
     this.logger.log(
       `Авто-ответ (${options.dryRun ? 'preview' : 'боевой'}): ` +
         `отправлено ${result.sent}, закрыто ${result.cleared}, тебе ${result.manual}`,
+    );
+    return result;
+  }
+
+  /**
+   * Выгрузка всего, что осталось без нашего ответа.
+   *
+   * Дорогая часть — чтение истории, оно же главный источник FloodWait.
+   * Поэтому дешёвый пред-фильтр: если последнее сообщение диалога наше,
+   * отвечать нечего и историю читать незачем. Это отсекает почти всех.
+   */
+  public async collectUnanswered(limit: number): Promise<InboxDump> {
+    const client = this.telegram.getClient();
+    const candidates = await this.leads.getDialogCandidates();
+
+    const dump: InboxDump = {
+      createdAt: formatStamp(new Date()),
+      dialogsSeen: 0,
+      dialogs: [],
+      trivial: [],
+      stoppedBecause: 'кандидаты закончились',
+    };
+
+    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+      if (dump.dialogs.length + dump.trivial.length >= limit) {
+        dump.stoppedBecause = `упёрлись в лимит выгрузки (${limit})`;
+        break;
+      }
+      if (!dialog.isUser) continue;
+      const entity = dialog.entity;
+      if (!(entity instanceof Api.User)) continue;
+
+      const candidate = candidates.get(entity.id.toString());
+      if (!candidate) continue;
+      dump.dialogsSeen += 1;
+
+      // Пред-фильтр: последнее сообщение наше или пустое — читать историю не за чем.
+      const last = dialog.message;
+      if (!last || last.out !== false) continue;
+      if ((last.message ?? '').trim().length === 0) continue;
+
+      let messages;
+      try {
+        messages = await client.getMessages(entity, { limit: this.config.deepLimit });
+        await sleep(this.config.deepDelayMs);
+      } catch (err) {
+        // Историю не прочитали — в выгрузку не кладём: писать ответ вслепую
+        // хуже, чем не ответить сейчас и увидеть человека в следующий раз.
+        this.logger.warn(
+          `Выгрузка: id${candidate.tgUserId} — история недоступна: ${describeError(err)}`,
+        );
+        continue;
+      }
+
+      const contactedAtSec = candidate.contactedAt
+        ? Math.floor(candidate.contactedAt.getTime() / 1000)
+        : 0;
+      const slice = sliceUnanswered(
+        messages.map((m: Api.Message): HistoryMessage => ({
+          out: m.out === true,
+          date: m.date,
+          message: m.message ?? '',
+        })),
+        contactedAtSec,
+      );
+
+      if (slice.incoming.length === 0) continue;
+
+      const newest = slice.incoming[slice.incoming.length - 1];
+      const decision = autoReplyDecision(newest.message);
+
+      // Set по ссылкам, а не повторение предиката sliceUnanswered: incoming
+      // собран как history.filter(...), объекты те же самые, поэтому
+      // членство проверяется точно и не может разъехаться с курсором.
+      const isFresh = new Set(slice.incoming);
+
+      const entry: InboxDialog = {
+        tgUserId: candidate.tgUserId,
+        username: entity.username ?? null,
+        hook: buildHook(candidate.sampleText),
+        about: candidate.sampleText,
+        heuristic: {
+          kind: decision.kind,
+          action: decision.action,
+          reason: decision.reason,
+        },
+        history: slice.history
+          // Сообщения без текста — наши скриншоты из рассылки и чужие
+          // стикеры. Отвечать на них не на что, а в файле они рисовались
+          // пустыми блоками по семь подряд перед каждым письмом.
+          //
+          // Фильтруем ТОЛЬКО здесь, при рендере. Убрать их раньше, до
+          // sliceUnanswered, — значит потерять наше фото как «последнее
+          // наше сообщение»: курсор откатится назад, и уже отвеченный
+          // диалог всплывёт в следующей выгрузке заново.
+          .filter((m) => m.message.trim().length > 0)
+          .map((m): InboxMessage => ({
+            out: m.out,
+            at: formatStamp(new Date(m.date * 1000)),
+            text: m.message,
+            fresh: isFresh.has(m),
+          })),
+      };
+
+      // Эвристика уверена, что ответа не требует, — в отдельный блок, чтобы
+      // не тратить внимание на пятьдесят «ок».
+      if (decision.action === 'clear') dump.trivial.push(entry);
+      else dump.dialogs.push(entry);
+    }
+
+    this.logger.log(
+      `Выгрузка: нужен ответ ${dump.dialogs.length}, тривиальных ${dump.trivial.length}`,
+    );
+    return dump;
+  }
+
+  /** Идёт ли прогон outbox: параллельно запускать нельзя, см. ниже. */
+  public isSending(): boolean {
+    return this.sending;
+  }
+
+  /**
+   * Отправка ответов, подготовленных в outbox.
+   *
+   * Перед КАЖДОЙ отправкой история диалога перечитывается — в том числе в
+   * предпросмотре. Лишние запросы того стоят: предпросмотр, который проверяет
+   * не то же, что боевой прогон, показывает не то, что произойдёт.
+   *
+   * Идемпотентность держится на двух вещах, а не на одном guard'е по истории:
+   * guard закрывает случай «человек больше ничего не написал», а сравнение со
+   * стампом выгрузки — случай «написал». Стампа в имени файла нет — ни один
+   * SEND не уходит: дешевле отложить лид до следующей выгрузки, чем прислать
+   * ему второе такое же сообщение.
+   *
+   * Латч на время прогона: два параллельных запуска успевают оба прочитать
+   * историю до того, как первый отправит, и guard пропускает обоих. Тот же
+   * приём, что у скана (`ScannerService.isRunning`).
+   */
+  public async sendPreparedReplies(
+    entries: OutboxEntry[],
+    options: SendPreparedOptions,
+  ): Promise<OutboxSendResult> {
+    this.sending = true;
+    try {
+      return await this.runPreparedReplies(entries, options);
+    } finally {
+      // Снимаем на любом выходе, включая брошенное исключение: залипший латч
+      // означает «отправка больше не запускается до перезапуска процесса».
+      this.sending = false;
+    }
+  }
+
+  private async runPreparedReplies(
+    entries: OutboxEntry[],
+    options: SendPreparedOptions,
+  ): Promise<OutboxSendResult> {
+    const client = this.telegram.getClient();
+    const candidates = await this.leads.getDialogCandidates();
+    const cap = Math.min(options.limit, this.config.autoReplyMax);
+
+    const result: OutboxSendResult = {
+      dryRun: options.dryRun,
+      file: options.file,
+      sent: 0,
+      closed: 0,
+      asked: 0,
+      skipped: 0,
+      untouched: options.untouched,
+      notFound: 0,
+      stoppedBecause: 'записи закончились',
+      staleCheck: options.dumpedAtSec !== null,
+      entries: [],
+    };
+
+    const pending = new Map(entries.map((e) => [e.tgUserId, e]));
+    const hadSendEntries = entries.some((e) => e.directive === 'send');
+
+    // Всё, для чего Telegram не нужен, разбираем до прохода и в порядке файла.
+    for (const entry of entries) {
+      // ASK ничего не отправляет: тело — вопрос к автору.
+      if (entry.directive === 'ask') {
+        pending.delete(entry.tgUserId);
+        result.asked += 1;
+        result.entries.push(sendEntry(entry, 'asked'));
+        continue;
+      }
+
+      // CLOSE — это markAnswered по id из файла, диалог для него не нужен.
+      // Разбираем здесь, а не в общем обходе: до записи проход может не
+      // дойти (лимит отправок, обрыв на ошибке), и тогда она осела бы в
+      // notFound необработанной. markAnswered НЕ защищает от повторного
+      // появления в следующей выгрузке — inbox смотрит на неотвеченный
+      // хвост истории, а не на статус лида (от этого спасает только
+      // `yarn skip`, см. docs/reply-guidelines.md); реальный эффект пометки —
+      // запись уходит из worklist `yarn replies` (getRepliesWorklist
+      // фильтрует status='replied') и notFound остаётся точным.
+      if (entry.directive === 'close') {
+        pending.delete(entry.tgUserId);
+
+        // Тот же guard, что у SEND ниже: id пришёл из файла непроверенным, а
+        // markAnswered — безусловный UPDATE по tg_user_id. Без сверки с
+        // кандидатами опечатка в цифре тихо переводит в answered чужого лида.
+        const candidate = candidates.get(entry.tgUserId);
+        if (!candidate) {
+          result.skipped += 1;
+          result.entries.push(
+            sendEntry(
+              entry,
+              'skipped',
+              'нет среди кандидатов: помечен skip/rejected или id не тот',
+            ),
+          );
+          continue;
+        }
+
+        result.closed += 1;
+        if (!options.dryRun) {
+          try {
+            await this.leads.markAnswered(entry.tgUserId);
+          } catch (err) {
+            this.logger.warn(
+              `CLOSE id${entry.tgUserId}: markAnswered упал: ${describeError(err)}`,
+            );
+          }
+        }
+        result.entries.push(sendEntry(entry, options.dryRun ? 'preview' : 'closed'));
+        continue;
+      }
+
+      // SEND без стампа в имени файла: fail-closed. Если человек ответил на
+      // наш ответ («спасибо!»), неотвеченное снова непусто, а курсор стоит на
+      // нашем же сообщении — от повторной отправки того же текста защищает
+      // ровно сравнение со стампом. Нет стампа — нет защиты.
+      if (options.dumpedAtSec === null) {
+        pending.delete(entry.tgUserId);
+        result.skipped += 1;
+        result.entries.push(
+          sendEntry(
+            entry,
+            'skipped',
+            'в имени файла нет стампа, повторный запуск мог бы отправить дубль — ' +
+              'переименуй в YYYY-MM-DD-HHMM.md',
+          ),
+        );
+      }
+    }
+
+    // Ранний выход ДО входа в цикл: `for await` дёрнул бы `iterDialogs` и
+    // сходил в Telegram за первой страницей диалогов ещё до первой проверки в
+    // теле. Файл, в котором отправлять нечего, не должен трогать сеть вовсе.
+    if (pending.size === 0) {
+      // Две разные причины ничего не обходить — печатаем ту, что реально
+      // случилась, а не общую формулировку «записи закончились»: она
+      // подразумевает прошедший обход, а его тут не было вовсе.
+      result.stoppedBecause =
+        options.dumpedAtSec === null && hadSendEntries
+          ? 'в имени файла нет стампа выгрузки — SEND отправлять было нельзя'
+          : 'в файле только CLOSE/ASK — по диалогам идти незачем';
+      this.logger.log(`Outbox ${options.file}: отправлять нечего, Telegram не трогали`);
+      return result;
+    }
+
+    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+      if (pending.size === 0) break;
+      if (result.sent >= cap) {
+        result.stoppedBecause = `упёрлись в лимит отправок (${cap})`;
+        break;
+      }
+      if (!dialog.isUser) continue;
+      const dialogEntity = dialog.entity;
+      if (!(dialogEntity instanceof Api.User)) continue;
+
+      const id = dialogEntity.id.toString();
+      const entry = pending.get(id);
+      if (!entry) continue;
+      pending.delete(id);
+
+      // Кому писать — решает база, а не файл: человека могли пометить
+      // skip/rejected уже после выгрузки, а опечатка в цифре id уводит ответ
+      // в посторонний диалог. Проверяем до чтения истории: оно дорогое.
+      const candidate = candidates.get(id);
+      if (!candidate) {
+        result.skipped += 1;
+        result.entries.push(
+          sendEntry(
+            entry,
+            'skipped',
+            'нет среди кандидатов: помечен skip/rejected или id не тот',
+          ),
+        );
+        continue;
+      }
+
+      // SEND: перечитываем историю и решаем, актуален ли ещё черновик.
+      let messages;
+      try {
+        messages = await client.getMessages(dialogEntity, {
+          limit: this.config.deepLimit,
+        });
+        await sleep(this.config.deepDelayMs);
+      } catch (err) {
+        result.skipped += 1;
+        result.entries.push(
+          sendEntry(entry, 'skipped', `история недоступна: ${describeError(err)}`),
+        );
+        continue;
+      }
+
+      const contactedAtSec = candidate.contactedAt
+        ? Math.floor(candidate.contactedAt.getTime() / 1000)
+        : 0;
+      const slice = sliceUnanswered(
+        messages.map((m: Api.Message): HistoryMessage => ({
+          out: m.out === true,
+          date: m.date,
+          message: m.message ?? '',
+        })),
+        contactedAtSec,
+      );
+
+      // Неотвеченного нет — значит после выгрузки ты ответил руками.
+      if (slice.incoming.length === 0) {
+        result.skipped += 1;
+        result.entries.push(sendEntry(entry, 'skipped', 'ты ответил руками'));
+        continue;
+      }
+
+      // Человек написал ещё раз после выгрузки: черновик отвечает на устаревшую
+      // реплику, а это выглядит как невнимательность. Пусть попадёт в следующий
+      // inbox уже с новым контекстом.
+      const newestSec = slice.incoming[slice.incoming.length - 1].date;
+      if (options.dumpedAtSec !== null && newestSec > options.dumpedAtSec) {
+        result.skipped += 1;
+        result.entries.push(
+          sendEntry(entry, 'skipped', 'написал ещё раз после выгрузки'),
+        );
+        continue;
+      }
+
+      if (options.dryRun) {
+        result.sent += 1;
+        result.entries.push(sendEntry(entry, 'preview'));
+        continue;
+      }
+
+      try {
+        // parseMode: false — тело писал ассистент В MARKDOWN-ФАЙЛ, где `**`,
+        // `~~` и бэктики родная разметка. Парсер GramJS (он включён по
+        // умолчанию) вырезает непарный делимитер молча, и человек получает не
+        // те байты, которые автор вычитал. Глобально не выключаем: холодное
+        // письмо в sender.service шлётся из body.md и на разметку опирается.
+        await client.sendMessage(dialogEntity, {
+          message: entry.body,
+          parseMode: false,
+        });
+      } catch (err) {
+        const message = describeError(err);
+        result.entries.push(sendEntry(entry, 'failed', message));
+        result.stoppedBecause = `ошибка отправки: ${message}`;
+        break;
+      }
+
+      // Сообщение УШЛО. markAnswered отдельно: его сбой не имеет права выдать
+      // отправленное за провал. Даже если пометка не пройдёт, следующая
+      // выгрузка увидит наше исходящее и не предложит ответить второй раз.
+      result.sent += 1;
+      result.entries.push(sendEntry(entry, 'sent'));
+      try {
+        await this.leads.markAnswered(id);
+      } catch (err) {
+        this.logger.error(
+          `Ответ ушёл id${id}, но markAnswered упал: ${describeError(err)}`,
+        );
+      }
+
+      // Джиттер, а не ровная пауза: ровный ритм запросов — сам по себе
+      // признак автоматизации.
+      await sleepJitter(this.config.autoReplyDelaySec * 1000);
+    }
+
+    // Записи, до которых проход не дошёл: диалога нет в списке, кончился лимит,
+    // остановились по ошибке. Это НЕ то же, что `untouched` (там — кому ответ
+    // не написали вовсе); оба числа печатаются, чтобы лид не терялся молча.
+    result.notFound = pending.size;
+
+    this.logger.log(
+      `Outbox ${options.file} (${options.dryRun ? 'preview' : 'боевой'}): ` +
+        `отправлено ${result.sent}, закрыто ${result.closed}, тебе ${result.asked}, ` +
+        `пропущено ${result.skipped}, не дошёл ${result.notFound}`,
     );
     return result;
   }
@@ -513,4 +922,23 @@ function resolveType(entity: Api.Chat | Api.Channel): DiscoveredChat['type'] {
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function formatStamp(at: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${at.getFullYear()}-${p(at.getMonth() + 1)}-${p(at.getDate())} ${p(at.getHours())}:${p(at.getMinutes())}`;
+}
+
+function sendEntry(
+  entry: OutboxEntry,
+  outcome: OutboxSendEntry['result'],
+  note?: string,
+): OutboxSendEntry {
+  return {
+    tgUserId: entry.tgUserId,
+    username: entry.username,
+    directive: entry.directive,
+    result: outcome,
+    note,
+  };
 }

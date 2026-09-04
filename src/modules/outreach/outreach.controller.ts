@@ -32,6 +32,40 @@ class MarkQueryDto {
   public readonly status?: LeadStatus;
 }
 
+class InboxQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  public readonly limit?: number;
+}
+
+class OutboxQueryDto {
+  /** Basename внутри outbox/. Без него берётся самый свежий файл. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  public readonly file?: string;
+
+  /** Реально слать. По умолчанию false — сначала предпросмотр. */
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string'
+      ? ['true', '1', 'yes'].includes(value.toLowerCase())
+      : value,
+  )
+  @IsBoolean()
+  public readonly send?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  public readonly limit?: number;
+}
+
 class AutoReplyQueryDto {
   /** Реально слать. По умолчанию false — сначала предпросмотр. */
   @IsOptional()
@@ -111,5 +145,25 @@ export class OutreachController {
   public mark(@Query() query: MarkQueryDto): Promise<string> {
     const usernames = query.usernames.split(',');
     return this.outreach.mark(usernames, query.status ?? 'contacted');
+  }
+
+  /**
+   * Выгрузка неотвеченного в inbox/: `yarn inbox`.
+   * Дальше файл читает ассистент и пишет ответы в outbox/.
+   */
+  @Post('inbox')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public inbox(@Query() query: InboxQueryDto): Promise<string> {
+    return this.outreach.inbox(query.limit ?? 200);
+  }
+
+  /**
+   * Отправка ответов из outbox/. Без `send=true` — только предпросмотр
+   * (`yarn outbox`). С `send=true` — реально отправляет (`yarn outbox:send`).
+   */
+  @Post('outbox/send')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public outboxSend(@Query() query: OutboxQueryDto): Promise<string> {
+    return this.outreach.outboxSend(query.file, query.send === true, query.limit ?? 200);
   }
 }

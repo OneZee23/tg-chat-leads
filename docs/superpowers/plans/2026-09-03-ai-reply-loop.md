@@ -751,7 +751,8 @@ git commit -m "feat: файловый слой inbox/outbox — basename-guard �
 - Test: `src/modules/outreach/inbox.format.spec.ts`
 
 **Interfaces:**
-- Consumes: ничего.
+- Consumes: `OUTBOX_DIR` из `@modules/outreach/reply-files` (Task 3) — в тексте
+  файла упоминается папка, куда класть ответы. Task 3 идёт раньше.
 - Produces: `InboxMessage { out: boolean; at: string; text: string; fresh: boolean }`, `InboxDialog { tgUserId: string; username: string | null; hook: string; about: string | null; heuristic: { kind: string; action: string; reason: string }; history: InboxMessage[] }`, `InboxDump { createdAt: string; dialogsSeen: number; dialogs: InboxDialog[]; trivial: InboxDialog[]; stoppedBecause: string }`, `formatInbox(dump: InboxDump): string`, `formatInboxSummary(dump: InboxDump, path: string): string`.
 
 Типы объявлены здесь, а не в `dialogs.service.ts`, чтобы форматтер тестировался без Telegram; `DialogsService` их импортирует. Обратной зависимости нет — цикла не возникает.
@@ -1461,6 +1462,11 @@ function formatStamp(at: Date): string {
 Run: `yarn test && yarn lint:ci && yarn build`
 Expected: PASS. `noUnusedLocals: true` поймает лишние импорты.
 
+Юнит-тестов у метода нет намеренно, как и у Task 8: он почти целиком — обход
+`iterDialogs` и вызовы GramJS, мок которых проверял бы мок. Логика, где можно
+ошибиться, вынесена в `sliceUnanswered` (Task 1) и покрыта там. Поведение
+метода проверяется живьём в финальном чеклисте.
+
 - [ ] **Step 3: Коммит**
 
 ```bash
@@ -1540,6 +1546,14 @@ public async sendPreparedReplies(
     pending.delete(entry.tgUserId);
     result.asked += 1;
     result.entries.push(sendEntry(entry, 'asked'));
+  }
+
+  // Ранний выход ДО входа в цикл: `for await` дёрнул бы `iterDialogs` и
+  // сходил в Telegram за первой страницей диалогов ещё до первой проверки в
+  // теле. Файл из одних ASK не должен трогать сеть вовсе.
+  if (pending.size === 0) {
+    this.logger.log(`Outbox ${options.file}: только ASK, Telegram не трогали`);
+    return result;
   }
 
   for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
@@ -1935,7 +1949,11 @@ Expected: приложение поднимается, в логе видны м
 yarn outbox
 ```
 
-Expected: при пустом `outbox/` — «В outbox/ нет ни одного .md». Затем создать `outbox/битый.md` с содержимым `## id1\nSEDN\nтекст` и прогнать `yarn outbox битый.md` — ожидается сообщение «не разобран, ничего не отправлено». Файл потом удалить.
+Expected: при пустом `outbox/` — «В outbox/ нет ни одного .md». Затем создать `outbox/broken.md` с содержимым `## id1\nSEDN\nтекст` и прогнать `yarn outbox broken.md` — ожидается сообщение «не разобран, ничего не отправлено». Файл потом удалить.
+
+Имя файла обязано быть латиницей: `assertSafeName` пропускает только
+`[A-Za-z0-9._-]`, поэтому кириллическое имя отсекается guard'ом на два слоя
+раньше и до разбора не доходит — такой пример проверял бы не то.
 
 - [ ] **Step 7: Коммит**
 
@@ -1992,7 +2010,7 @@ git commit -m "feat: ручки inbox/outbox, скрипты и гитигнор
 - `teach-track-frontend/src/pages/Landing.tsx` — что обещано публично;
 - `teach-track-frontend/src/pages/Roadmap.tsx` — граница «есть» / «будет».
   Именно на ней ответ превращается в обещание, которого никто не давал;
-- CHANGELOG в `teach-track-backend` — что реально уехало в прод.
+- `teach-track-frontend/CHANGELOG.md` — что реально уехало в прод.
 
 Списка фич здесь нет намеренно: он устареет молча, а код — нет.
 

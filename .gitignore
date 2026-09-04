@@ -13,6 +13,11 @@ coverage/
 export/
 *.csv
 
+# Обмен с ассистентом: входящие ответы живых людей и наши реплики им.
+# Персональные данные третьих лиц — в git им не место, как и выгрузкам.
+inbox/
+outbox/
+
 *.log
 .DS_Store
 .idea/
@@ -23,3 +28,6 @@ export/
 posts/cold-outreach/text.md
 posts/cold-outreach/body.md
 posts/cold-outreach/images/
+
+# Служебная директория исполнения планов (леджер, брифы, диффы на ревью).
+.superpowers/

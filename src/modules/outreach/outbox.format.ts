@@ -1,0 +1,129 @@
+import { OutboxDirective } from '@modules/outreach/outbox.parse';
+
+/**
+ * Итог прогона отправки. Печатаем текстом: это читает человек в терминале
+ * сразу после команды, а не другая программа.
+ */
+
+export type OutboxEntryResult =
+  'preview' | 'sent' | 'closed' | 'asked' | 'skipped' | 'failed';
+
+export interface OutboxSendEntry {
+  tgUserId: string;
+  username: string | null;
+  directive: OutboxDirective;
+  result: OutboxEntryResult;
+  /** Причина пропуска или текст ошибки. */
+  note?: string;
+}
+
+export interface OutboxSendResult {
+  dryRun: boolean;
+  file: string;
+  sent: number;
+  closed: number;
+  asked: number;
+  skipped: number;
+  /**
+   * Диалоги из выгрузки, для которых в outbox нет записи вовсе.
+   * null — самой выгрузки на диске уже нет, сверять не по чему.
+   */
+  untouched: number | null;
+  /** Записи outbox, до которых проход по диалогам не дошёл. */
+  notFound: number;
+  stoppedBecause: string;
+  /** Удалось ли проверить, что человек не написал после выгрузки. */
+  staleCheck: boolean;
+  entries: OutboxSendEntry[];
+}
+
+const LABEL_BY_RESULT: Record<OutboxEntryResult, string> = {
+  preview: '', // будет переопределен в зависимости от directive
+  sent: 'отправлено',
+  closed: 'закрыто без ответа',
+  asked: 'оставлено тебе',
+  skipped: 'пропущено',
+  failed: 'ОШИБКА',
+};
+
+/**
+ * Лейбл для preview-результата зависит от директивы, чтобы предпросмотр
+ * честно говорил, что произойдёт, — это единственный режим, где человек
+ * решает, доверять инструменту или нет.
+ */
+function getPreviewLabel(directive: OutboxDirective): string {
+  switch (directive) {
+    case 'send':
+      return 'отправлю';
+    case 'close':
+      return 'закрою без ответа';
+    case 'ask':
+      return 'оставлю тебе';
+  }
+}
+
+function getLabel(result: OutboxEntryResult, directive: OutboxDirective): string {
+  if (result === 'preview') {
+    return getPreviewLabel(directive);
+  }
+  return LABEL_BY_RESULT[result];
+}
+
+export function formatOutboxResult(result: OutboxSendResult): string {
+  const lines: string[] = [
+    '',
+    result.dryRun ? 'ПРЕДПРОСМОТР (ничего не отправлено)' : 'Отправка выполнена',
+    `Файл: ${result.file}`,
+    '',
+  ];
+
+  result.entries.forEach((e, i) => {
+    const nick = e.username ? `@${e.username}` : `id${e.tgUserId}`;
+    const note = e.note ? `  ·  ${e.note}` : '';
+    lines.push(
+      `${String(i + 1).padStart(2, ' ')}. ${nick}  ·  ${e.directive}  ·  ${getLabel(e.result, e.directive)}${note}`,
+    );
+  });
+
+  lines.push('', '—'.repeat(60));
+  // Время глаголов одно на весь блок: «Закрыто: 3» под заголовком
+  // ПРЕДПРОСМОТР читается как уже сделанное, хотя не сделано ничего.
+  lines.push(`${result.dryRun ? 'Ушло бы' : 'Отправлено'}: ${result.sent}`);
+  lines.push(
+    `${result.dryRun ? 'Закрыл бы без ответа' : 'Закрыто без ответа'}: ${result.closed}`,
+  );
+  lines.push(
+    `${result.dryRun ? 'Осталось бы тебе (ASK)' : 'Оставлено тебе (ASK)'}: ${result.asked}`,
+  );
+  lines.push(
+    `${result.dryRun ? 'Пропустил бы' : 'Пропущено'} (причина у записи): ${result.skipped}`,
+  );
+  // Молчаливая потеря лида — ровно то, от чего мы уходим, поэтому цифра
+  // печатается всегда, даже нулевая.
+  lines.push(
+    `Было в выгрузке, но не тронуто: ${
+      result.untouched === null
+        ? 'не по чему сверить — выгрузки нет на диске'
+        : result.untouched
+    }`,
+  );
+  lines.push(`Записи, до которых проход не дошёл: ${result.notFound}`);
+  lines.push(`Остановка: ${result.stoppedBecause}`);
+
+  if (!result.staleCheck) {
+    lines.push('');
+    lines.push('⚠ В имени файла нет стампа выгрузки — свежесть проверять не по чему,');
+    lines.push(
+      `  поэтому ни один SEND ${result.dryRun ? 'не ушёл бы' : 'не ушёл'}: повторный запуск того же файла`,
+    );
+    lines.push('  отправил бы человеку дубль. Переименуй в YYYY-MM-DD-HHMM.md.');
+  }
+
+  if (result.dryRun) {
+    lines.push('');
+    lines.push(`Если всё верно — отправить: yarn outbox:send ${result.file}`);
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}

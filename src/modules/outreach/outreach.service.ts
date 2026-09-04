@@ -11,6 +11,24 @@ import {
   formatAutoReplyResult,
   formatRepliesWorklist,
 } from '@modules/outreach/replies.format';
+import { formatInbox, formatInboxSummary } from '@modules/outreach/inbox.format';
+import { formatOutboxResult } from '@modules/outreach/outbox.format';
+import {
+  OutboxEntry,
+  OutboxParseError,
+  extractRecordIds,
+  parseOutbox,
+} from '@modules/outreach/outbox.parse';
+import {
+  inboxFileName,
+  listOutboxNames,
+  newestOutboxName,
+  parseDumpTimestamp,
+  readInbox,
+  readOutbox,
+  writeInbox,
+  UnsafeFileNameError,
+} from '@modules/outreach/reply-files';
 import { FloodWaitTracker } from '@modules/telegram/flood-wait.tracker';
 
 /**
@@ -104,5 +122,103 @@ export class OutreachService {
       return `\nНикого не нашёл по этим никам. Проверь написание.\n`;
     }
     return `\nПомечено как ${status}: ${affected}\n`;
+  }
+
+  /** Выгрузка неотвеченного в файл: `yarn inbox`. */
+  public async inbox(limit: number): Promise<string> {
+    // Стамп снимаем ДО обхода, а не после. Обход идёт минутами (пауза на
+    // каждое чтение истории), и стамп с его конца оказывается позже, чем
+    // сообщения, пришедшие уже во время обхода: guard перед отправкой их не
+    // считает свежими и мы отвечаем на устаревшую реплику. Стамп с начала
+    // ошибается в другую сторону — лишний пропуск, лид уедет в следующий inbox.
+    const name = inboxFileName(new Date());
+    const dump = await this.dialogs.collectUnanswered(limit);
+    const path = writeInbox(name, formatInbox(dump));
+    return formatInboxSummary(dump, path);
+  }
+
+  /**
+   * Отправка ответов из outbox: `yarn outbox` (предпросмотр) и
+   * `yarn outbox:send`. Без имени файла берём самый свежий — так у команды
+   * без аргументов есть осмысленное поведение.
+   */
+  public async outboxSend(
+    file: string | undefined,
+    send: boolean,
+    limit: number,
+  ): Promise<string> {
+    // Два прогона внахлёст успевают оба прочитать историю до того, как первый
+    // отправит, и guard по свежести пропускает обоих: человек получает дубль.
+    // Ровно та же защита, что у скана выше.
+    if (this.dialogs.isSending()) {
+      return '\nПрогон outbox уже идёт. Подожди и повтори — параллельно запускать нельзя.\n';
+    }
+
+    const name = file ?? newestOutboxName();
+    if (!name) {
+      const present = listOutboxNames();
+      if (present.length > 0) {
+        // «Нет ни одного .md» здесь было бы враньём и читалось как «ассистент
+        // ничего не написал». Файлы есть, просто самый свежий из имён без
+        // стампа не выбрать.
+        return (
+          `\nВ outbox/ есть .md, но ни у одного нет стампа выгрузки в имени ` +
+          `(YYYY-MM-DD-HHMM.md), а без него не понять, какой свежее. Лежат: ` +
+          `${present.join(', ')}.\n` +
+          `Переименуй нужный файл обратно в стамп его выгрузки — дата и время ` +
+          `есть в шапке файла («# Неотвеченное на …»). SEND из файла без стампа ` +
+          `всё равно не уйдёт: проверить, не написал ли человек после выгрузки, ` +
+          `будет не по чему.\n`
+        );
+      }
+      return '\nВ outbox/ нет ни одного .md — сначала попроси ассистента написать ответы по файлу из inbox/.\n';
+    }
+
+    let raw: string;
+    try {
+      raw = readOutbox(name);
+    } catch (err) {
+      if (err instanceof UnsafeFileNameError) return `\n${err.message}\n`;
+      throw err;
+    }
+
+    let entries;
+    try {
+      entries = parseOutbox(raw);
+    } catch (err) {
+      // Разбор упал — значит не отправлено ничего. Это и есть задуманное
+      // поведение, поэтому текст ошибки печатаем как обычный ответ.
+      if (err instanceof OutboxParseError) {
+        return `\nФайл outbox/${name} не разобран, ничего не отправлено:\n${err.message}\n`;
+      }
+      throw err;
+    }
+
+    const result = await this.dialogs.sendPreparedReplies(entries, {
+      dryRun: !send,
+      limit,
+      file: name,
+      dumpedAtSec: parseDumpTimestamp(name),
+      untouched: this.countUntouched(name, entries),
+    });
+    return formatOutboxResult(result);
+  }
+
+  /**
+   * Сколько диалогов из выгрузки остались без записи в outbox.
+   *
+   * Считается по самому inbox-файлу, а не по результату прохода: иначе
+   * человек, для которого ответ просто не написали, нигде не всплывёт —
+   * ровно та молчаливая потеря лида, от которой мы уходим. Формат заголовка
+   * у inbox и outbox один, поэтому хватает `extractRecordIds`.
+   *
+   * null — выгрузки на диске уже нет: сверять не по чему, и итог скажет это
+   * прямым текстом вместо честного на вид нуля.
+   */
+  private countUntouched(name: string, entries: OutboxEntry[]): number | null {
+    const dump = readInbox(name);
+    if (dump === null) return null;
+    const answered = new Set(entries.map((e) => e.tgUserId));
+    return extractRecordIds(dump).filter((id) => !answered.has(id)).length;
   }
 }
