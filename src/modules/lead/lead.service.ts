@@ -592,6 +592,13 @@ export class LeadService {
    * которому написали и которого потом пометили `skip`, из статусов выпадает,
    * и конверсия задирается вверх. Факт отправки не отменяется тем, что мы
    * потом передумали с ним работать.
+   *
+   * В числителе обязателен `answered`. Без него метрика падала ровно оттого,
+   * что мы отвечаем людям: ответивший переходит в `answered` и переставал
+   * считаться ответившим. На живых данных это давало 5% вместо 20%.
+   *
+   * `replied_at` для этого не годится: его заполняет только `recount`, а
+   * `markAnswered` не трогает, поэтому у большинства он пуст.
    */
   public async outreachSummary(): Promise<{ contacted: number; replied: number }> {
     const rows: Array<{ contacted: string; replied: string }> = await this.repo.query(
@@ -600,7 +607,7 @@ export class LeadService {
         count(*) FILTER (WHERE contacted_at IS NOT NULL)::text AS contacted,
         count(*) FILTER (
           WHERE contacted_at IS NOT NULL
-            AND status IN ('replied', 'registered', 'rejected')
+            AND status IN ('replied', 'answered', 'registered', 'rejected')
         )::text AS replied
       FROM tg_lead
       `,
