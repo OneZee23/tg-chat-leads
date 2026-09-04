@@ -556,12 +556,22 @@ export class DialogsService {
           action: decision.action,
           reason: decision.reason,
         },
-        history: slice.history.map((m): InboxMessage => ({
-          out: m.out,
-          at: formatStamp(new Date(m.date * 1000)),
-          text: m.message,
-          fresh: isFresh.has(m),
-        })),
+        history: slice.history
+          // Сообщения без текста — наши скриншоты из рассылки и чужие
+          // стикеры. Отвечать на них не на что, а в файле они рисовались
+          // пустыми блоками по семь подряд перед каждым письмом.
+          //
+          // Фильтруем ТОЛЬКО здесь, при рендере. Убрать их раньше, до
+          // sliceUnanswered, — значит потерять наше фото как «последнее
+          // наше сообщение»: курсор откатится назад, и уже отвеченный
+          // диалог всплывёт в следующей выгрузке заново.
+          .filter((m) => m.message.trim().length > 0)
+          .map((m): InboxMessage => ({
+            out: m.out,
+            at: formatStamp(new Date(m.date * 1000)),
+            text: m.message,
+            fresh: isFresh.has(m),
+          })),
       };
 
       // Эвристика уверена, что ответа не требует, — в отдельный блок, чтобы

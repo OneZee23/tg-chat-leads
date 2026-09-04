@@ -93,6 +93,75 @@ const FRESH_HISTORY = [
   { out: false, date: DUMPED_AT - 600, message: 'а сколько стоит?' },
 ];
 
+/** Диалог для collectUnanswered: у него важно последнее сообщение — по нему
+ *  идёт дешёвый пред-фильтр, экономящий запрос истории. */
+function dialogWithLast(
+  id: string,
+  username: string | null,
+  last: { out: boolean; date: number; message: string },
+) {
+  return { isUser: true, entity: user(id, username), message: last };
+}
+
+describe('collectUnanswered', () => {
+  it('сообщения без текста не попадают в отрендеренную историю', async () => {
+    // Рассылка уходит скриншотами: у них message пустой, и в файле они
+    // рисовались пустыми блоками по семь подряд перед каждым письмом.
+    // Отвечать на них не на что, читать мешает.
+    const { service } = makeService({
+      dialogs: [
+        dialogWithLast('1', 'nick', {
+          out: false,
+          date: DUMPED_AT,
+          message: 'вопрос',
+        }),
+      ],
+      messages: [
+        { out: true, date: DUMPED_AT - 3600, message: '' },
+        { out: true, date: DUMPED_AT - 3599, message: '' },
+        { out: true, date: DUMPED_AT - 3598, message: 'наше письмо' },
+        { out: false, date: DUMPED_AT, message: 'вопрос' },
+      ],
+      candidates: new Map([candidate('1')]),
+    });
+
+    const dump = await service.collectUnanswered(10);
+
+    const all = [...dump.dialogs, ...dump.trivial];
+    expect(all).toHaveLength(1);
+    expect(all[0].history.map((m) => m.text)).toEqual(['наше письмо', 'вопрос']);
+  });
+
+  it('пустое исходящее всё равно двигает курсор — иначе диалог всплыл бы заново', async () => {
+    // Фильтровать пустые можно ТОЛЬКО при рендере. Убрать их до
+    // sliceUnanswered — значит потерять наше фото как «последнее наше
+    // сообщение», откатить курсор назад и снова показать уже отвеченное.
+    const { service } = makeService({
+      dialogs: [
+        dialogWithLast('1', 'nick', {
+          out: false,
+          date: DUMPED_AT + 150,
+          message: 'новый вопрос',
+        }),
+      ],
+      messages: [
+        { out: true, date: DUMPED_AT, message: 'наше письмо' },
+        { out: false, date: DUMPED_AT + 50, message: 'старый вопрос' },
+        { out: true, date: DUMPED_AT + 100, message: '' },
+        { out: false, date: DUMPED_AT + 150, message: 'новый вопрос' },
+      ],
+      candidates: new Map([candidate('1')]),
+    });
+
+    const dump = await service.collectUnanswered(10);
+
+    const fresh = [...dump.dialogs, ...dump.trivial][0].history
+      .filter((m) => m.fresh)
+      .map((m) => m.text);
+    expect(fresh).toEqual(['новый вопрос']);
+  });
+});
+
 describe('sendPreparedReplies', () => {
   it('без стампа в имени файла ни один SEND не уходит', async () => {
     // Guard по истории закрывает только случай «человек больше не писал».
