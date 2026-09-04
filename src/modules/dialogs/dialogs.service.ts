@@ -647,10 +647,33 @@ export class DialogsService {
       }
 
       // CLOSE — это markAnswered по id из файла, диалог для него не нужен.
-      // Пока он ждал прохода, запись, до которой проход не дошёл, оседала в
-      // notFound неотмеченной и всплывала в следующей выгрузке заново.
+      // Разбираем здесь, а не в общем обходе: до записи проход может не
+      // дойти (лимит отправок, обрыв на ошибке), и тогда она осела бы в
+      // notFound необработанной. markAnswered НЕ защищает от повторного
+      // появления в следующей выгрузке — inbox смотрит на неотвеченный
+      // хвост истории, а не на статус лида (от этого спасает только
+      // `yarn skip`, см. docs/reply-guidelines.md); реальный эффект пометки —
+      // запись уходит из worklist `yarn replies` (getRepliesWorklist
+      // фильтрует status='replied') и notFound остаётся точным.
       if (entry.directive === 'close') {
         pending.delete(entry.tgUserId);
+
+        // Тот же guard, что у SEND ниже: id пришёл из файла непроверенным, а
+        // markAnswered — безусловный UPDATE по tg_user_id. Без сверки с
+        // кандидатами опечатка в цифре тихо переводит в answered чужого лида.
+        const candidate = candidates.get(entry.tgUserId);
+        if (!candidate) {
+          result.skipped += 1;
+          result.entries.push(
+            sendEntry(
+              entry,
+              'skipped',
+              'нет среди кандидатов: помечен skip/rejected или id не тот',
+            ),
+          );
+          continue;
+        }
+
         result.closed += 1;
         if (!options.dryRun) {
           try {

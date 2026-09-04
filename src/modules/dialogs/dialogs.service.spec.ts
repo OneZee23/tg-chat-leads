@@ -142,8 +142,11 @@ describe('sendPreparedReplies', () => {
 
   it('CLOSE помечает answered, не дожидаясь прохода по диалогам', async () => {
     // Диалога в проходе нет вовсе: раньше такой CLOSE оседал в notFound
-    // неотмеченным и всплывал в следующей выгрузке заново.
-    const { service, client, leads } = makeService({ dialogs: [] });
+    // необработанным, пока проход до него не дойдёт (а мог и не дойти).
+    const { service, client, leads } = makeService({
+      dialogs: [],
+      candidates: new Map([candidate('777')]),
+    });
 
     const result = await service.sendPreparedReplies(
       [entry({ tgUserId: '777', directive: 'close', body: '' })],
@@ -157,7 +160,7 @@ describe('sendPreparedReplies', () => {
   });
 
   it('предпросмотр CLOSE ничего не помечает', async () => {
-    const { service, leads } = makeService();
+    const { service, leads } = makeService({ candidates: new Map([candidate('1')]) });
 
     const result = await service.sendPreparedReplies(
       [entry({ directive: 'close', body: '' })],
@@ -166,6 +169,22 @@ describe('sendPreparedReplies', () => {
 
     expect(leads.markAnswered).not.toHaveBeenCalled();
     expect(result.closed).toBe(1);
+  });
+
+  it('CLOSE по id не из кандидатов — пропускаем, answered не ставим', async () => {
+    // Тот же guard, что у SEND: id из файла непроверенный, а markAnswered —
+    // безусловный UPDATE по tg_user_id. Опечатка в цифре задела бы чужого лида.
+    const { service, leads } = makeService({ candidates: new Map() });
+
+    const result = await service.sendPreparedReplies(
+      [entry({ tgUserId: '999', directive: 'close', body: '' })],
+      options(),
+    );
+
+    expect(leads.markAnswered).not.toHaveBeenCalled();
+    expect(result.closed).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.entries[0].note).toContain('кандидат');
   });
 
   it('кому не место в кандидатах — тому не пишем', async () => {
