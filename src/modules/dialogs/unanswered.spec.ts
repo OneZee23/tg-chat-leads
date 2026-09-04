@@ -85,7 +85,10 @@ describe('sliceUnanswered', () => {
   it('но написал ПОСЛЕ закрытия — снова ждёт ответа', () => {
     // Закрытие гасит прошлое, а не человека: тёплый лид, вернувшийся с
     // вопросом, обязан всплыть.
-    const history = [msg(false, 400, 'а как завести учеников?'), msg(true, 100, 'наше письмо')];
+    const history = [
+      msg(false, 400, 'а как завести учеников?'),
+      msg(true, 100, 'наше письмо'),
+    ];
     expect(sliceUnanswered(history, 300).incoming.map((m) => m.message)).toEqual([
       'а как завести учеников?',
     ]);
