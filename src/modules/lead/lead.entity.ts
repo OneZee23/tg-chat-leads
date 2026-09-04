@@ -115,6 +115,16 @@ export class LeadEntity {
   @Column({ name: 'replied_at', type: 'timestamptz', nullable: true })
   public repliedAt: Date | null;
 
+  /**
+   * Когда диалог закрыли без ответа (директива CLOSE).
+   *
+   * Работает как наше исходящее сообщение: двигает курсор неотвеченного
+   * вперёд. Без этого закрытый человек возвращается в каждую выгрузку —
+   * `CLOSE` ничего не шлёт, и его сообщение остаётся последним в переписке.
+   */
+  @Column({ name: 'closed_at', type: 'timestamptz', nullable: true })
+  public closedAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   public readonly createdAt: Date;
 

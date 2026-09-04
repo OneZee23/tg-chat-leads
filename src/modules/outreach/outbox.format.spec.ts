@@ -57,6 +57,44 @@ describe('formatOutboxResult', () => {
     expect(out).toContain('Пропущено');
   });
 
+  it('варианты ASK печатаются целиком — выбирать надо из терминала', () => {
+    // Иначе ради каждого ASK приходится открывать файл, а их по пять-шесть
+    // на пачку. Смысл ASK в том, чтобы автор выбрал готовое, а не сочинял.
+    const out = formatOutboxResult(
+      result({
+        entries: [
+          {
+            tgUserId: '9',
+            username: 'd',
+            directive: 'ask',
+            result: 'asked',
+            body: 'Зовут в партнёрский пост.\n\n1) Если интересно: «Расскажите подробнее»\n2) Если нет: «Спасибо, что позвали)»',
+          },
+        ],
+      }),
+    );
+    expect(out).toContain('партнёрский пост');
+    expect(out).toContain('1) Если интересно');
+    expect(out).toContain('2) Если нет');
+  });
+
+  it('у send и close тело в итог не печатается — оно уже ушло или не нужно', () => {
+    const out = formatOutboxResult(
+      result({
+        entries: [
+          {
+            tgUserId: '1',
+            username: 'a',
+            directive: 'send',
+            result: 'sent',
+            body: 'текст письма',
+          },
+        ],
+      }),
+    );
+    expect(out).not.toContain('текст письма');
+  });
+
   it('диалоги из выгрузки, которых нет в outbox, названы вслух', () => {
     // Спека обещает именно это число: «в выгрузке 23, разобрано 19,
     // не тронуто 4». Молчаливая потеря лида — то, от чего мы уходим.

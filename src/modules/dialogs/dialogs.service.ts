@@ -524,16 +524,13 @@ export class DialogsService {
         continue;
       }
 
-      const contactedAtSec = candidate.contactedAt
-        ? Math.floor(candidate.contactedAt.getTime() / 1000)
-        : 0;
       const slice = sliceUnanswered(
         messages.map((m: Api.Message): HistoryMessage => ({
           out: m.out === true,
           date: m.date,
           message: m.message ?? '',
         })),
-        contactedAtSec,
+        cursorFloorSec(candidate),
       );
 
       if (slice.incoming.length === 0) continue;
@@ -778,16 +775,13 @@ export class DialogsService {
         continue;
       }
 
-      const contactedAtSec = candidate.contactedAt
-        ? Math.floor(candidate.contactedAt.getTime() / 1000)
-        : 0;
       const slice = sliceUnanswered(
         messages.map((m: Api.Message): HistoryMessage => ({
           out: m.out === true,
           date: m.date,
           message: m.message ?? '',
         })),
-        contactedAtSec,
+        cursorFloorSec(candidate),
       );
 
       // Неотвеченного нет — значит после выгрузки ты ответил руками.
@@ -920,6 +914,25 @@ function resolveType(entity: Api.Chat | Api.Channel): DiscoveredChat['type'] {
   return 'supergroup';
 }
 
+/**
+ * Нижняя граница курсора неотвеченного: позднейшее из «когда мы написали» и
+ * «когда закрыли диалог без ответа».
+ *
+ * Общая функция, а не два одинаковых куска: выгрузка и отправка обязаны
+ * считать курсор одинаково. Разъедутся — предпросмотр покажет одно, а
+ * отправка сделает другое.
+ */
+function cursorFloorSec(candidate: {
+  contactedAt: Date | null;
+  closedAt: Date | null;
+}): number {
+  return Math.max(toUnixSec(candidate.contactedAt), toUnixSec(candidate.closedAt));
+}
+
+function toUnixSec(at: Date | null): number {
+  return at ? Math.floor(at.getTime() / 1000) : 0;
+}
+
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -940,5 +953,8 @@ function sendEntry(
     directive: entry.directive,
     result: outcome,
     note,
+    // Тело несём только у ASK: его печатает итог, чтобы автор выбирал
+    // вариант из терминала. Тела send и close в выводе не нужны.
+    body: entry.directive === 'ask' ? entry.body : undefined,
   };
 }

@@ -25,19 +25,31 @@ export interface UnansweredSlice {
   history: HistoryMessage[];
 }
 
+/**
+ * @param floorSec нижняя граница курсора в unix-секундах: самое позднее из
+ *   «когда мы написали письмо» и «когда закрыли диалог без ответа». Курсор —
+ *   максимум из неё и последнего нашего исходящего.
+ *
+ *   Граница нужна из-за директивы `CLOSE`: она ничего не отправляет, поэтому
+ *   сообщение человека остаётся последним в переписке, и без отметки закрытия
+ *   он возвращался бы в каждую следующую выгрузку. При этом закрытие гасит
+ *   прошлое, а не человека: написал после — снова попадает в неотвеченные.
+ */
 export function sliceUnanswered(
   messages: HistoryMessage[],
-  contactedAtSec: number,
+  floorSec: number,
 ): UnansweredSlice {
   // GramJS отдаёт от новых к старым; и читать, и рендерить удобнее наоборот.
   const history = [...(messages ?? [])].sort((a, b) => a.date - b.date);
 
   const outgoing = history.filter((m) => m.out);
-  // Нашего исходящего в окне нет вовсе (человек написал больше сообщений, чем
-  // мы читаем) — падаем назад на дату письма. Иначе курсора не будет совсем
-  // и в выгрузку уедет вся переписка.
-  const cursorSec =
-    outgoing.length > 0 ? outgoing[outgoing.length - 1].date : contactedAtSec;
+  const lastOutgoingSec = outgoing.length > 0 ? outgoing[outgoing.length - 1].date : 0;
+  // Максимум, а не «исходящее либо граница»: закрытие диалога должно двигать
+  // курсор так же, как наше сообщение, а наш поздний ответ руками — перебивать
+  // раннее закрытие. Если исходящего в окне нет вовсе (человек написал больше,
+  // чем мы читаем), остаётся граница — иначе курсора не будет совсем и в
+  // выгрузку уедет вся переписка.
+  const cursorSec = Math.max(lastOutgoingSec, floorSec);
 
   const incoming = history.filter(
     (m) => !m.out && m.date > cursorSec && (m.message ?? '').trim().length > 0,

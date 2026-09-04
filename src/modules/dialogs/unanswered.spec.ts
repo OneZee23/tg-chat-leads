@@ -71,6 +71,39 @@ describe('sliceUnanswered', () => {
     ]);
   });
 
+  it('отметка закрытия двигает курсор вперёд, как наше сообщение', () => {
+    // CLOSE ничего не отправляет, поэтому сообщение человека остаётся
+    // последним, и без этой границы он возвращался в КАЖДУЮ выгрузку.
+    const history = [msg(false, 200, 'спасибо!'), msg(true, 100, 'наше письмо')];
+
+    // Закрыли в 300 — после его «спасибо».
+    expect(sliceUnanswered(history, 300).incoming).toEqual([]);
+    // Без закрытия он бы вернулся.
+    expect(sliceUnanswered(history, 100).incoming).toHaveLength(1);
+  });
+
+  it('но написал ПОСЛЕ закрытия — снова ждёт ответа', () => {
+    // Закрытие гасит прошлое, а не человека: тёплый лид, вернувшийся с
+    // вопросом, обязан всплыть.
+    const history = [msg(false, 400, 'а как завести учеников?'), msg(true, 100, 'наше письмо')];
+    expect(sliceUnanswered(history, 300).incoming.map((m) => m.message)).toEqual([
+      'а как завести учеников?',
+    ]);
+  });
+
+  it('наше исходящее позже закрытия — курсор берёт максимум', () => {
+    // Закрыли в 200, потом всё-таки написали руками в 300. Курсор — 300.
+    const history = [
+      msg(false, 350, 'новое сообщение'),
+      msg(true, 300, 'ответ руками'),
+      msg(false, 150, 'старое'),
+      msg(true, 100, 'письмо'),
+    ];
+    const slice = sliceUnanswered(history, 200);
+    expect(slice.cursorSec).toBe(300);
+    expect(slice.incoming.map((m) => m.message)).toEqual(['новое сообщение']);
+  });
+
   it('пустая история — пустой результат, без падения', () => {
     const slice = sliceUnanswered([], 100);
     expect(slice.cursorSec).toBe(100);

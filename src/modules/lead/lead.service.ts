@@ -27,6 +27,8 @@ export interface DialogCandidate {
   tgUserId: string;
   contactedAt: Date | null;
   sampleText: string | null;
+  /** Когда закрыли без ответа; двигает курсор неотвеченного вперёд. */
+  closedAt: Date | null;
 }
 
 @Injectable()
@@ -563,8 +565,9 @@ export class LeadService {
       tg_user_id: string;
       contacted_at: Date | null;
       sample_text: string | null;
+      closed_at: Date | null;
     }> = await this.repo.query(
-      `SELECT tg_user_id, contacted_at, sample_text FROM tg_lead
+      `SELECT tg_user_id, contacted_at, sample_text, closed_at FROM tg_lead
        WHERE contacted_at IS NOT NULL
          AND status NOT IN ('skip', 'rejected')`,
     );
@@ -576,15 +579,29 @@ export class LeadService {
           tgUserId: String(r.tg_user_id),
           contactedAt: r.contacted_at,
           sampleText: r.sample_text,
+          closedAt: r.closed_at,
         },
       ]),
     );
   }
 
-  /** Мы ответили человеку (шаблоном или руками): → answered. */
+  /**
+   * Мы разобрались с человеком: ответили или закрыли без ответа → answered.
+   *
+   * `closed_at` здесь важнее статуса. Выгрузка неотвеченного смотрит на хвост
+   * истории диалога, а не на статус лида, поэтому директива CLOSE (которая
+   * ничего не отправляет) без этой отметки оставляла человека неотвеченным
+   * навсегда: его сообщение так и остаётся последним в переписке. На живых
+   * данных это давало 28 из 37 записей в файле — одни и те же люди каждый день.
+   *
+   * При отправке отметка избыточна — курсор и так сдвинет наше исходящее, —
+   * но ставим её всегда: одна ветка вместо двух, а курсор берёт максимум.
+   */
   public async markAnswered(tgUserId: string): Promise<void> {
     await this.repo.query(
-      `UPDATE tg_lead SET status = 'answered', updated_at = now() WHERE tg_user_id = $1`,
+      `UPDATE tg_lead
+          SET status = 'answered', closed_at = now(), updated_at = now()
+        WHERE tg_user_id = $1`,
       [tgUserId],
     );
   }

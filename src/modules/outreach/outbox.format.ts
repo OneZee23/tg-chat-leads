@@ -15,6 +15,12 @@ export interface OutboxSendEntry {
   result: OutboxEntryResult;
   /** Причина пропуска или текст ошибки. */
   note?: string;
+  /**
+   * Тело записи. Печатается только для `ask`: варианты ответа надо видеть
+   * в терминале, иначе ради каждого приходится открывать файл, а их бывает
+   * по пять-шесть на пачку.
+   */
+  body?: string;
 }
 
 export interface OutboxSendResult {
@@ -83,6 +89,12 @@ export function formatOutboxResult(result: OutboxSendResult): string {
     lines.push(
       `${String(i + 1).padStart(2, ' ')}. ${nick}  ·  ${e.directive}  ·  ${getLabel(e.result, e.directive)}${note}`,
     );
+    // Варианты ответа печатаем прямо здесь: выбор делается из терминала, а
+    // в файл человек лезет только чтобы вставить выбранное.
+    if (e.directive === 'ask' && e.body) {
+      e.body.split(/\r?\n/).forEach((line) => lines.push(`      ${line}`));
+      lines.push('');
+    }
   });
 
   lines.push('', '—'.repeat(60));
