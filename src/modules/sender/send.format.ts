@@ -21,7 +21,13 @@ export interface SendStatusView {
   /** Отправка началась, исход неизвестен — разбирать руками. */
   unfinishedCount: number;
   outreach: { contacted: number; replied: number };
-  /** Ответили и ждут нашего ответа (по базе). */
+  /**
+   * Ответили и ждут ответа — по статусу в базе.
+   *
+   * Это оценка сверху, а не факт: статус `replied` остаётся висеть на тех,
+   * кому ответили руками мимо инструмента. Точное число знает только обход
+   * диалогов, то есть `yarn inbox`.
+   */
   awaitingReply: number;
   /** Отобраны, но ещё не написаны. */
   queued: number;
@@ -37,7 +43,7 @@ export function formatSendStatus(s: SendStatusView): string {
       (s.outreach.contacted > 0
         ? `   (${Math.round((s.outreach.replied / s.outreach.contacted) * 100)}%)`
         : ''),
-    `  Ждут нашего ответа: ${s.awaitingReply}`,
+    `  Ждут ответа (по базе): ${s.awaitingReply}`,
     `  В очереди на отправку: ${s.queued}`,
     '',
     `  Суточный бюджет: ${b.used} из ${b.limit}, осталось ${b.remaining}` +
@@ -52,7 +58,9 @@ export function formatSendStatus(s: SendStatusView): string {
   }
   if (s.running) lines.push('  ⚠ Рассылка идёт прямо сейчас');
 
-  lines.push('', '—'.repeat(60), nextStep(s), '');
+  // Подсказка внизу каждого экрана: `yarn help` перехватывает сам yarn, так
+  // что единственная надёжная точка входа в шпаргалку — эта строка.
+  lines.push('', '—'.repeat(60), nextStep(s), '', 'Все команды: yarn commands', '');
   return lines.join('\n');
 }
 
@@ -75,7 +83,7 @@ function nextStep(s: SendStatusView): string {
     return 'Дальше: разобрать застрявшие — yarn send:release';
   }
   if (s.awaitingReply > 0) {
-    return `Дальше: ${s.awaitingReply} чел. ждут ответа — yarn inbox`;
+    return `Дальше: по базе ${s.awaitingReply} могут ждать ответа, проверить — yarn inbox`;
   }
   if (s.dailyBudget.remaining === 0) {
     const when = s.dailyBudget.resetsAt

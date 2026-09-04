@@ -72,6 +72,19 @@ describe('formatSendStatus', () => {
   it('говорит, что рассылка сейчас идёт, чтобы не запускать вторую', () => {
     expect(formatSendStatus(status({ running: true }))).toMatch(/идёт/i);
   });
+
+  it('число ждущих подписано как оценка по базе, а не как факт', () => {
+    // Статус `replied` устаревает: на тех, кому автор ответил руками, он
+    // остаётся висеть. Настоящее число знает только обход диалогов, поэтому
+    // экран обязан признавать, что это оценка.
+    const out = formatSendStatus(status({ awaitingReply: 45 }));
+    expect(out).toMatch(/по базе/i);
+  });
+
+  it('внизу всегда есть, где посмотреть остальные команды', () => {
+    // Иначе шпаргалку надо помнить, а yarn help занят самим yarn.
+    expect(formatSendStatus(status())).toContain('yarn commands');
+  });
 });
 
 describe('formatSendReport', () => {
