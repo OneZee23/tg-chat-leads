@@ -635,6 +635,7 @@ export class DialogsService {
     };
 
     const pending = new Map(entries.map((e) => [e.tgUserId, e]));
+    const hadSendEntries = entries.some((e) => e.directive === 'send');
 
     // Всё, для чего Telegram не нужен, разбираем до прохода и в порядке файла.
     for (const entry of entries) {
@@ -710,6 +711,13 @@ export class DialogsService {
     // сходил в Telegram за первой страницей диалогов ещё до первой проверки в
     // теле. Файл, в котором отправлять нечего, не должен трогать сеть вовсе.
     if (pending.size === 0) {
+      // Две разные причины ничего не обходить — печатаем ту, что реально
+      // случилась, а не общую формулировку «записи закончились»: она
+      // подразумевает прошедший обход, а его тут не было вовсе.
+      result.stoppedBecause =
+        options.dumpedAtSec === null && hadSendEntries
+          ? 'в имени файла нет стампа выгрузки — SEND отправлять было нельзя'
+          : 'в файле только CLOSE/ASK — по диалогам идти незачем';
       this.logger.log(`Outbox ${options.file}: отправлять нечего, Telegram не трогали`);
       return result;
     }

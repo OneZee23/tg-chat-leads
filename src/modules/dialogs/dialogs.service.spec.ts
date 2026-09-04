@@ -187,6 +187,56 @@ describe('sendPreparedReplies', () => {
     expect(result.entries[0].note).toContain('кандидат');
   });
 
+  it('без стампа: причина остановки называет реальный повод, а не общую фразу', async () => {
+    // Ранний выход ДО iterDialogs — «записи закончились» подразумевала бы
+    // прошедший обход, которого тут не было вовсе.
+    const { service } = makeService({ dialogs: [dialog('1', 'nick')] });
+
+    const result = await service.sendPreparedReplies(
+      [entry()],
+      options({ dumpedAtSec: null }),
+    );
+
+    expect(result.stoppedBecause).toContain('нет стампа');
+  });
+
+  it('в файле только CLOSE/ASK: причина остановки не врёт про обход диалогов', async () => {
+    const { service } = makeService({ candidates: new Map([candidate('1')]) });
+
+    const result = await service.sendPreparedReplies(
+      [entry({ directive: 'close', body: '' })],
+      options(),
+    );
+
+    expect(result.stoppedBecause).not.toBe('записи закончились');
+    expect(result.stoppedBecause).toContain('CLOSE');
+  });
+
+  it('без стампа + CLOSE в одном файле: CLOSE проходит, SEND отказан, обхода нет', async () => {
+    // Пересечение двух guard'ов из отдельных тестов выше: fail-closed по SEND
+    // без стампа не должен блокировать CLOSE, а CLOSE не должен утягивать
+    // проход в iterDialogs — как и одиночный CLOSE.
+    const { service, client, leads } = makeService({
+      candidates: new Map([candidate('1'), candidate('2')]),
+    });
+
+    const result = await service.sendPreparedReplies(
+      [
+        entry({ tgUserId: '1', directive: 'send' }),
+        entry({ tgUserId: '2', directive: 'close', body: '' }),
+      ],
+      options({ dumpedAtSec: null }),
+    );
+
+    expect(client.iterDialogs).not.toHaveBeenCalled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(leads.markAnswered).toHaveBeenCalledWith('2');
+    expect(leads.markAnswered).not.toHaveBeenCalledWith('1');
+    expect(result.sent).toBe(0);
+    expect(result.closed).toBe(1);
+    expect(result.skipped).toBe(1);
+  });
+
   it('кому не место в кандидатах — тому не пишем', async () => {
     // Человека могли пометить skip/rejected уже после выгрузки, а опечатка в
     // цифре id уводит ответ в посторонний диалог.
