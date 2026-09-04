@@ -80,12 +80,22 @@ export class SenderService {
    * заходил второй вызов, оба читали один и тот же остаток бюджета, и
    * суточная норма удваивалась.
    */
-  public async run(limitOverride?: number): Promise<SendReport> {
+  /**
+   * `dryRunOverride` — предпросмотр по требованию, поверх `SEND_DRY_RUN`.
+   *
+   * Нужен, чтобы команда «покажи, кому уйдёт» существовала независимо от
+   * конфига: при боевом `SEND_DRY_RUN=false` иначе нет способа посмотреть,
+   * не отправив.
+   */
+  public async run(
+    limitOverride?: number,
+    dryRunOverride?: boolean,
+  ): Promise<SendReport> {
     if (this.running) throw new Error('Рассылка уже идёт');
     this.running = true;
 
     try {
-      return await this.execute(limitOverride);
+      return await this.execute(limitOverride, dryRunOverride);
     } finally {
       this.running = false;
     }
@@ -96,7 +106,13 @@ export class SenderService {
     return this.run(1);
   }
 
-  private async execute(limitOverride?: number): Promise<SendReport> {
+  private async execute(
+    limitOverride?: number,
+    dryRunOverride?: boolean,
+  ): Promise<SendReport> {
+    // Предпросмотр можно включить поверх конфига, но НЕ выключить им:
+    // `SEND_DRY_RUN=true` остаётся жёстким запретом на отправку.
+    const dryRun = this.config.dryRun || dryRunOverride === true;
     const content = loadMessageContent(this.config.contentDir);
     // Явный limit из команды главнее SEND_MAX_PER_RUN: ты набираешь это
     // число руками на каждый запуск. Суточный бюджет — другое дело,
@@ -105,7 +121,7 @@ export class SenderService {
     const budget = await this.attempts.budget(this.config.maxPerDay);
 
     const report: SendReport = {
-      dryRun: this.config.dryRun,
+      dryRun,
       attempted: 0,
       sent: 0,
       failed: 0,
@@ -120,7 +136,7 @@ export class SenderService {
       entries: [],
     };
 
-    if (!this.config.dryRun) {
+    if (!dryRun) {
       const blocked = await this.blockReason(budget.remaining);
       if (blocked) {
         report.stoppedBecause = blocked.reason;
@@ -131,11 +147,11 @@ export class SenderService {
 
     // Бюджет режет запрошенное число, и об этом честно пишем в отчёте —
     // молча урезать значит соврать о том, сколько людей получит письмо.
-    const limit = this.config.dryRun ? requested : Math.min(requested, budget.remaining);
+    const limit = dryRun ? requested : Math.min(requested, budget.remaining);
 
     // В dry-run лидов не занимаем: статусы должны остаться нетронутыми,
     // иначе «просто посмотреть» молча выведет людей из очереди.
-    const targets = this.config.dryRun
+    const targets = dryRun
       ? (await this.leads.findForOutreach(limit)).items
       : await this.leads.claimForSending(limit);
 
@@ -144,7 +160,7 @@ export class SenderService {
     for (const [index, lead] of targets.entries()) {
       report.attempted += 1;
 
-      if (this.config.dryRun) {
+      if (dryRun) {
         report.entries.push({ username: lead.username, result: 'dry-run' });
         continue;
       }

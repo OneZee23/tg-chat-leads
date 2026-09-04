@@ -1,6 +1,8 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { Body, Controller, Get, Header, Post, Query } from '@nestjs/common';
+import { Transform, Type } from 'class-transformer';
+import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { HELP_TEXT } from '@common/help.text';
+import { formatSendReport, formatSendStatus } from '@modules/sender/send.format';
 import { LeadService } from '@modules/lead/lead.service';
 import { SendAttemptService } from '@modules/sender/send-attempt.service';
 import { SendSchedulerService } from '@modules/sender/send-scheduler.service';
@@ -15,6 +17,23 @@ class RunSendDto {
   @Min(1)
   @Max(200)
   public readonly limit?: number;
+
+  /**
+   * Реально слать. По умолчанию false — предпросмотр, как у `outbox/send`.
+   *
+   * Рассылка незнакомым людям — самое необратимое действие в инструменте:
+   * получатели жалуются модераторам, и аккаунт зажимают (см.
+   * `docs/postmortem-spam-ban.md`). Значит по умолчанию она показывает,
+   * а не делает.
+   */
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string'
+      ? ['true', '1', 'yes'].includes(value.toLowerCase())
+      : value,
+  )
+  @IsBoolean()
+  public readonly send?: boolean;
 }
 
 class RecentQueryDto {
@@ -42,8 +61,10 @@ export class SenderController {
    * curl -sS -XPOST http://127.0.0.1:3010/send/run -H 'content-type: application/json' -d '{"limit":5}'
    */
   @Post('run')
-  public run(@Body() body: RunSendDto) {
-    return this.sender.run(body.limit);
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public async run(@Body() body: RunSendDto): Promise<string> {
+    const report = await this.sender.run(body.limit, body.send !== true);
+    return formatSendReport(report);
   }
 
   /** Размазанная по дню рассылка вместо пачки. */
@@ -57,8 +78,35 @@ export class SenderController {
     return { ...this.scheduler.stop(), status: this.scheduler.status() };
   }
 
+  /** Один экран «где я сейчас»: `yarn status`. */
   @Get('status')
-  public async status(@Query() query: RecentQueryDto) {
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public async status(): Promise<string> {
+    const budget = await this.attempts.budget(this.config.maxPerDay);
+    const unfinished = await this.attempts.listUnfinished();
+    const scheduler = this.scheduler.status();
+
+    return formatSendStatus({
+      running: this.sender.isRunning(),
+      dryRun: this.config.dryRun,
+      dailyBudget: budget,
+      scheduler: {
+        active: scheduler.active,
+        window: scheduler.window,
+        nextSendAt: scheduler.nextSendAt,
+      },
+      floodSummary: this.flood.summary(),
+      floodActive: this.flood.active().length,
+      unfinishedCount: unfinished.length,
+      outreach: await this.leads.outreachSummary(),
+      awaitingReply: (await this.leads.getRepliesWorklist()).length,
+      queued: (await this.leads.findForOutreach(1)).total,
+    });
+  }
+
+  /** Машиночитаемое состояние — осталось для отладки: `/send/status.json`. */
+  @Get('status.json')
+  public async statusJson(@Query() query: RecentQueryDto) {
     const budget = await this.attempts.budget(this.config.maxPerDay);
     const unfinished = await this.attempts.listUnfinished();
 
@@ -89,5 +137,12 @@ export class SenderController {
   @Post('release-stuck')
   public releaseStuck() {
     return this.leads.releaseStuckSending();
+  }
+
+  /** Шпаргалка по дневному циклу: `yarn help`. */
+  @Get('help')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public help(): string {
+    return HELP_TEXT;
   }
 }
