@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /**
  * Файлы обмена с ассистентом.
@@ -160,10 +160,33 @@ export function readReviews(name: string, baseDir = process.cwd()): string | nul
  * Переопределяется через `REVIEWS_OUT_DIR`, чтобы не завязываться на раскладку
  * чужой машины намертво.
  */
-export function testimonialsDir(baseDir = process.cwd()): string {
-  const fromEnv = process.env.REVIEWS_OUT_DIR;
+function frontendRoot(baseDir = process.cwd()): string {
+  const fromEnv = process.env.REVIEWS_FRONTEND_DIR;
   if (fromEnv && fromEnv.length > 0) return fromEnv;
-  return join(baseDir, '..', 'teach-track-frontend', 'public', 'testimonials');
+  return join(baseDir, '..', 'teach-track-frontend');
+}
+
+/** Аватарки — в статику: их отдаёт веб-сервер по прямому пути. */
+export function testimonialsImagesDir(baseDir = process.cwd()): string {
+  return join(frontendRoot(baseDir), 'public', 'testimonials');
+}
+
+/**
+ * Сами карточки — в исходники, а не в статику.
+ *
+ * Лендинг импортирует их на этапе сборки, поэтому отзывы попадают в первую
+ * отрисовку. Через fetch из public это был бы лишний запрос и пустое место
+ * на экране, пока он летит, — на главной странице так делать не стоит.
+ */
+export function testimonialsDataPath(baseDir = process.cwd()): string {
+  return join(frontendRoot(baseDir), 'src', 'data', 'testimonials.json');
+}
+
+export function writeTestimonialsData(content: string, baseDir = process.cwd()): string {
+  const path = testimonialsDataPath(baseDir);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content, 'utf8');
+  return path;
 }
 
 export function writeTestimonial(

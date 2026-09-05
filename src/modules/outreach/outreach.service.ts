@@ -16,6 +16,7 @@ import { formatOutboxResult } from '@modules/outreach/outbox.format';
 import { formatReviews, formatReviewsSummary } from '@modules/outreach/reviews.format';
 import {
   ReviewsParseError,
+  cleanName,
   parseReviews,
   selectPublishable,
 } from '@modules/outreach/reviews.parse';
@@ -34,9 +35,11 @@ import {
   readOutbox,
   writeInbox,
   readReviews,
-  testimonialsDir,
+  testimonialsDataPath,
+  testimonialsImagesDir,
   writeReviews,
   writeTestimonial,
+  writeTestimonialsData,
   UnsafeFileNameError,
 } from '@modules/outreach/reply-files';
 import { FloodWaitTracker } from '@modules/telegram/flood-wait.tracker';
@@ -185,66 +188,80 @@ export class OutreachService {
       throw err;
     }
 
-    const { publish, blocked } = selectPublishable(rows);
-    if (publish.length === 0) {
+    const { named, anon, blocked } = selectPublishable(rows);
+    if (named.length === 0 && anon.length === 0) {
       const tail = blocked.length
-        ? `\nПомечены PUBLISH, но разрешения нет — пропущены: ${blocked
+        ? `\nПомечены к публикации, но нельзя — пропущены: ${blocked
             .map((r) => `@${r.username ?? r.tgUserId}`)
             .join(', ')}\n`
         : '';
-      return `\nНечего публиковать: ни одной записи с разрешением и пометкой PUBLISH.\n${tail}`;
+      return `\nНечего публиковать: ни одной записи с PUBLISH или ANON.\n${tail}`;
     }
 
-    const avatars = await this.dialogs.downloadAvatars(publish.map((r) => r.tgUserId));
-    const dir = testimonialsDir();
+    // Аватарки качаем только для именных: у анонимной карточки фото нет по
+    // определению, и лишний поход в Telegram тут был бы не нужен.
+    const avatars = await this.dialogs.downloadAvatars(named.map((r) => r.tgUserId));
+    const imagesDir = testimonialsImagesDir();
 
-    const cards = publish.map((r) => {
+    const namedCards = named.map((r) => {
       const key = r.username ?? `id${r.tgUserId}`;
       const buf = avatars.get(r.tgUserId);
       let avatar: string | null = null;
       if (buf) {
-        writeTestimonial(dir, `${key}.jpg`, buf);
+        writeTestimonial(imagesDir, `${key}.jpg`, buf);
         avatar = `/testimonials/${key}.jpg`;
       }
+      const display = cleanName(r.displayName);
       return {
-        name: r.displayName,
-        username: r.username,
-        link: r.username ? `https://t.me/${r.username}` : null,
+        name: display.length > 0 ? display : null,
+        link: display.length > 0 && r.username ? `https://t.me/${r.username}` : null,
         avatar,
         quote: r.quote,
       };
     });
 
-    writeTestimonial(dir, 'testimonials.json', JSON.stringify(cards, null, 2));
+    // У анонимной карточки НЕТ ни имени, ни ссылки, ни фото. Это не
+    // оформление, а весь смысл: без них персональных данных в карточке не
+    // остаётся и разрешение не требуется.
+    const anonCards = anon.map((r) => ({
+      name: null,
+      link: null,
+      avatar: null,
+      quote: r.quote,
+    }));
+
+    const cards = [...namedCards, ...anonCards];
+    writeTestimonialsData(JSON.stringify(cards, null, 2) + '\n');
 
     const lines = [
       '',
-      `Выгружено карточек: ${cards.length}`,
-      `  с аватаркой: ${cards.filter((c) => c.avatar).length}`,
-      `  без аватарки: ${cards.filter((c) => !c.avatar).length}`,
+      `Карточек: ${cards.length} (именных ${namedCards.length}, анонимных ${anonCards.length})`,
+      `  с аватаркой: ${namedCards.filter((c) => c.avatar).length}`,
       '',
-      `Каталог: ${dir}`,
+      `Данные: ${testimonialsDataPath()}`,
+      `Аватарки: ${imagesDir}`,
       '',
     ];
-    for (const c of cards) {
-      lines.push(
-        `  ${c.name}${c.username ? ` @${c.username}` : ''}${c.avatar ? '' : '  (без фото)'}`,
-      );
+    for (const c of namedCards) {
+      lines.push(`  ${c.name}${c.avatar ? '' : '  (без фото)'}`);
+    }
+    for (const r of anon) {
+      lines.push(`  анонимно: ${r.quote.slice(0, 60)}…`);
     }
     if (blocked.length > 0) {
       lines.push(
         '',
-        'Помечены PUBLISH, но разрешения нет — НЕ выгружены:',
-        ...blocked.map((r) => `  @${r.username ?? r.tgUserId}`),
-        'Сначала спроси разрешение в переписке и сними выгрузку заново.',
+        'Помечены к публикации, но НЕ выгружены:',
+        ...blocked.map(
+          (r) =>
+            `  @${r.username ?? r.tgUserId} — ` +
+            (r.directive === 'PUBLISH'
+              ? 'именная карточка без разрешения'
+              : 'человек отказался публиковать'),
+        ),
       );
     }
-    lines.push(
-      '',
-      '—'.repeat(60),
-      'Дальше: подключить testimonials.json на лендинге.',
-      '',
-    );
+    lines.push('', '—'.repeat(60), 'Дальше: пересобрать фронт.', '');
     return lines.join('\n');
   }
 
