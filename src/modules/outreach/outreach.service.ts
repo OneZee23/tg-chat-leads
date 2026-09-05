@@ -214,6 +214,7 @@ export class OutreachService {
       const display = cleanName(r.displayName);
       return {
         name: display.length > 0 ? display : null,
+        role: r.role.length > 0 ? r.role : null,
         link: display.length > 0 && r.username ? `https://t.me/${r.username}` : null,
         avatar,
         quote: r.quote,
@@ -223,8 +224,11 @@ export class OutreachService {
     // У анонимной карточки НЕТ ни имени, ни ссылки, ни фото. Это не
     // оформление, а весь смысл: без них персональных данных в карточке не
     // остаётся и разрешение не требуется.
+    // Роль у анонимной карточки остаётся: «Репетитор по биологии» никого не
+    // опознаёт, а отзыву даёт вес. Личность в ней по-прежнему отсутствует.
     const anonCards = anon.map((r) => ({
       name: null,
+      role: r.role.length > 0 ? r.role : null,
       link: null,
       avatar: null,
       quote: r.quote,

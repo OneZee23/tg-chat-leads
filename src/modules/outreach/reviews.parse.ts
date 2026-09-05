@@ -13,6 +13,8 @@ export interface ParsedReview {
   tgUserId: string;
   username: string | null;
   displayName: string;
+  /** Кем человек себя называет. Пусто — на карточке будет «Преподаватель». */
+  role: string;
   quote: string;
   /** Из какой секции файла запись. Именной карточкой публикуем только `given`. */
   section: 'given' | 'pending' | 'refused';
@@ -27,6 +29,7 @@ export interface ParsedReview {
 
 const HEAD = /^##\s+id(\d{1,20})(?:\s+@?([A-Za-z0-9_]{1,64}))?\s*$/;
 const NAME = /^-\s*имя:\s*(.+)$/;
+const ROLE = /^-\s*роль:\s*(.*)$/;
 const AT = /^\s{2}\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}\s*$/;
 const QUOTE_LINE = /^\s{4}(.*)$/;
 const SECTION = /^#\s+(.+?)(?:\s+—\s*\d+)?\s*$/;
@@ -92,6 +95,7 @@ export function parseReviews(raw: string): ParsedReview[] {
         tgUserId: head[1],
         username: head[2] ?? null,
         displayName: '',
+        role: '',
         quote: '',
         section,
         directive: 'SKIP',
@@ -104,6 +108,12 @@ export function parseReviews(raw: string): ParsedReview[] {
     const name = NAME.exec(line);
     if (name) {
       current.displayName = name[1].trim();
+      continue;
+    }
+
+    const role = ROLE.exec(line);
+    if (role) {
+      current.role = role[1].trim();
       continue;
     }
 
