@@ -11,6 +11,7 @@ import { join } from 'node:path';
 
 export const INBOX_DIR = 'inbox';
 export const OUTBOX_DIR = 'outbox';
+export const REVIEWS_DIR = 'reviews';
 
 export class UnsafeFileNameError extends Error {}
 
@@ -126,4 +127,53 @@ export function listOutboxNames(baseDir = process.cwd()): string[] {
   const dir = join(baseDir, OUTBOX_DIR);
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((n) => n.endsWith('.md'));
+}
+
+/**
+ * Выгрузка отзывов. Каталог в `.gitignore` по той же причине, что inbox и
+ * outbox: там имена, цитаты и ссылки живых людей, а репозиторий публичный.
+ */
+export function writeReviews(
+  name: string,
+  content: string,
+  baseDir = process.cwd(),
+): string {
+  assertSafeName(name);
+  const dir = join(baseDir, REVIEWS_DIR);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, name);
+  writeFileSync(path, content, 'utf8');
+  return path;
+}
+
+export function readReviews(name: string, baseDir = process.cwd()): string | null {
+  assertSafeName(name);
+  const path = join(baseDir, REVIEWS_DIR, name);
+  if (!existsSync(path)) return null;
+  return readFileSync(path, 'utf8');
+}
+
+/**
+ * Куда кладём готовые карточки для лендинга.
+ *
+ * По умолчанию — статика фронтенда в соседнем репозитории монорепозитория.
+ * Переопределяется через `REVIEWS_OUT_DIR`, чтобы не завязываться на раскладку
+ * чужой машины намертво.
+ */
+export function testimonialsDir(baseDir = process.cwd()): string {
+  const fromEnv = process.env.REVIEWS_OUT_DIR;
+  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  return join(baseDir, '..', 'teach-track-frontend', 'public', 'testimonials');
+}
+
+export function writeTestimonial(
+  dir: string,
+  fileName: string,
+  data: Buffer | string,
+): string {
+  assertSafeName(fileName);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, fileName);
+  writeFileSync(path, data);
+  return path;
 }

@@ -23,6 +23,8 @@
     "autoreply": "curl -sS --max-time 900 -XPOST 'http://127.0.0.1:3010/outreach/auto-reply'",
     "autoreply:send": "curl -sS --max-time 900 -XPOST 'http://127.0.0.1:3010/outreach/auto-reply?send=true'",
     "inbox": "curl -sS --max-time 900 -XPOST 'http://127.0.0.1:3010/outreach/inbox?limit=200'",
+    "reviews": "curl -sS --max-time 1800 -XPOST 'http://127.0.0.1:3010/outreach/reviews?limit=200'",
+    "reviews:build": "sh scripts/reviews-build.sh",
     "outbox": "sh scripts/outbox.sh",
     "outbox:send": "sh scripts/outbox.sh --send",
     "status": "curl -sS 'http://127.0.0.1:3010/send/status'",

@@ -158,6 +158,25 @@ export class OutreachController {
   }
 
   /**
+   * Сбор отзывов о продукте в reviews/: `yarn reviews`.
+   * Ничего не отправляет — только читает историю и складывает в файл.
+   */
+  @Post('reviews')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public reviews(@Query() query: InboxQueryDto): Promise<string> {
+    return this.outreach.reviews(query.limit ?? 200);
+  }
+
+  /**
+   * Выгрузка одобренных отзывов в статику лендинга: `yarn reviews:build <файл>`.
+   */
+  @Post('reviews/build')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public reviewsBuild(@Query('file') file: string): Promise<string> {
+    return this.outreach.reviewsBuild(file);
+  }
+
+  /**
    * Отправка ответов из outbox/. Без `send=true` — только предпросмотр
    * (`yarn outbox`). С `send=true` — реально отправляет (`yarn outbox:send`).
    */

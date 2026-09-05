@@ -13,6 +13,12 @@ import {
 } from '@modules/outreach/replies.format';
 import { formatInbox, formatInboxSummary } from '@modules/outreach/inbox.format';
 import { formatOutboxResult } from '@modules/outreach/outbox.format';
+import { formatReviews, formatReviewsSummary } from '@modules/outreach/reviews.format';
+import {
+  ReviewsParseError,
+  parseReviews,
+  selectPublishable,
+} from '@modules/outreach/reviews.parse';
 import {
   OutboxEntry,
   OutboxParseError,
@@ -27,6 +33,10 @@ import {
   readInbox,
   readOutbox,
   writeInbox,
+  readReviews,
+  testimonialsDir,
+  writeReviews,
+  writeTestimonial,
   UnsafeFileNameError,
 } from '@modules/outreach/reply-files';
 import { FloodWaitTracker } from '@modules/telegram/flood-wait.tracker';
@@ -135,6 +145,107 @@ export class OutreachService {
     const dump = await this.dialogs.collectUnanswered(limit);
     const path = writeInbox(name, formatInbox(dump));
     return formatInboxSummary(dump, path);
+  }
+
+  /**
+   * Сбор отзывов в reviews/: `yarn reviews`.
+   *
+   * Стамп снимаем до обхода — по той же причине, что и в inbox.
+   */
+  public async reviews(limit: number): Promise<string> {
+    const name = inboxFileName(new Date());
+    const dump = await this.dialogs.collectReviews(limit);
+    const path = writeReviews(name, formatReviews(dump));
+    return formatReviewsSummary(dump, path);
+  }
+
+  /**
+   * Выгрузка одобренных отзывов в статику лендинга: `yarn reviews:build <файл>`.
+   *
+   * Публикуются ТОЛЬКО записи из секции «Разрешение есть». `PUBLISH` под
+   * записью без разрешения не выполняется, а печатается отдельным списком:
+   * это почти наверняка недосмотр, а цена — чужие персональные данные в
+   * публичном доступе.
+   */
+  public async reviewsBuild(file: string): Promise<string> {
+    let raw: string | null;
+    try {
+      raw = readReviews(file);
+    } catch (err) {
+      if (err instanceof UnsafeFileNameError) return `\n${err.message}\n`;
+      throw err;
+    }
+    if (raw === null) return `\nФайла reviews/${file} нет. Сначала: yarn reviews\n`;
+
+    let rows;
+    try {
+      rows = parseReviews(raw);
+    } catch (err) {
+      if (err instanceof ReviewsParseError) return `\n${err.message}\n`;
+      throw err;
+    }
+
+    const { publish, blocked } = selectPublishable(rows);
+    if (publish.length === 0) {
+      const tail = blocked.length
+        ? `\nПомечены PUBLISH, но разрешения нет — пропущены: ${blocked
+            .map((r) => `@${r.username ?? r.tgUserId}`)
+            .join(', ')}\n`
+        : '';
+      return `\nНечего публиковать: ни одной записи с разрешением и пометкой PUBLISH.\n${tail}`;
+    }
+
+    const avatars = await this.dialogs.downloadAvatars(publish.map((r) => r.tgUserId));
+    const dir = testimonialsDir();
+
+    const cards = publish.map((r) => {
+      const key = r.username ?? `id${r.tgUserId}`;
+      const buf = avatars.get(r.tgUserId);
+      let avatar: string | null = null;
+      if (buf) {
+        writeTestimonial(dir, `${key}.jpg`, buf);
+        avatar = `/testimonials/${key}.jpg`;
+      }
+      return {
+        name: r.displayName,
+        username: r.username,
+        link: r.username ? `https://t.me/${r.username}` : null,
+        avatar,
+        quote: r.quote,
+      };
+    });
+
+    writeTestimonial(dir, 'testimonials.json', JSON.stringify(cards, null, 2));
+
+    const lines = [
+      '',
+      `Выгружено карточек: ${cards.length}`,
+      `  с аватаркой: ${cards.filter((c) => c.avatar).length}`,
+      `  без аватарки: ${cards.filter((c) => !c.avatar).length}`,
+      '',
+      `Каталог: ${dir}`,
+      '',
+    ];
+    for (const c of cards) {
+      lines.push(
+        `  ${c.name}${c.username ? ` @${c.username}` : ''}${c.avatar ? '' : '  (без фото)'}`,
+      );
+    }
+    if (blocked.length > 0) {
+      lines.push(
+        '',
+        'Помечены PUBLISH, но разрешения нет — НЕ выгружены:',
+        ...blocked.map((r) => `  @${r.username ?? r.tgUserId}`),
+        'Сначала спроси разрешение в переписке и сними выгрузку заново.',
+      );
+    }
+    lines.push(
+      '',
+      '—'.repeat(60),
+      'Дальше: подключить testimonials.json на лендинге.',
+      '',
+    );
+    return lines.join('\n');
   }
 
   /**

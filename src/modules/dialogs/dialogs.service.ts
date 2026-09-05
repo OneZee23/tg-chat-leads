@@ -2,11 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Api } from 'telegram';
 import { sleep, sleepJitter } from '@common/utils/sleep';
 import { DialogsConfig } from '@modules/dialogs/dialogs.config';
+import { detectReview } from '@modules/dialogs/review-detect';
 import { HistoryMessage, sliceUnanswered } from '@modules/dialogs/unanswered';
 import { LeadService } from '@modules/lead/lead.service';
 import { InboxDialog, InboxDump, InboxMessage } from '@modules/outreach/inbox.format';
 import { OutboxSendEntry, OutboxSendResult } from '@modules/outreach/outbox.format';
 import { OutboxEntry } from '@modules/outreach/outbox.parse';
+import { ReviewEntry, ReviewsDump } from '@modules/outreach/reviews.format';
 import { autoReplyDecision } from '@modules/outreach/reply-draft';
 import { AutoAction, ReplyKind } from '@modules/outreach/reply-draft';
 import { ScannerConfig } from '@modules/scanner/scanner.config';
@@ -581,6 +583,116 @@ export class DialogsService {
       `Выгрузка: нужен ответ ${dump.dialogs.length}, тривиальных ${dump.trivial.length}`,
     );
     return dump;
+  }
+
+  /**
+   * Сбор отзывов о продукте по всей переписке: `yarn reviews`.
+   *
+   * Обход тяжёлый — читаем полную историю каждого диалога, — поэтому идём
+   * только по тем, кто отвечал (см. getReviewCandidates). Ничего никуда не
+   * отправляет: только читает и складывает в файл, который потом смотрит
+   * человек.
+   */
+  public async collectReviews(limit: number): Promise<ReviewsDump> {
+    const client = this.telegram.getClient();
+    const candidates = await this.leads.getReviewCandidates();
+
+    const dump: ReviewsDump = {
+      createdAt: formatStamp(new Date()),
+      dialogsSeen: 0,
+      entries: [],
+      stoppedBecause: 'кандидаты закончились',
+    };
+
+    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+      if (dump.entries.length >= limit) {
+        dump.stoppedBecause = `упёрлись в лимит выгрузки (${limit})`;
+        break;
+      }
+      if (!dialog.isUser) continue;
+      const entity = dialog.entity;
+      if (!(entity instanceof Api.User)) continue;
+
+      const candidate = candidates.get(entity.id.toString());
+      if (!candidate) continue;
+      dump.dialogsSeen += 1;
+
+      let messages;
+      try {
+        messages = await client.getMessages(entity, { limit: this.config.deepLimit });
+        await sleep(this.config.deepDelayMs);
+      } catch (err) {
+        this.logger.warn(
+          `Отзывы: id${candidate.tgUserId} — история недоступна: ${describeError(err)}`,
+        );
+        continue;
+      }
+
+      const found = detectReview(
+        messages.map((m: Api.Message): HistoryMessage => ({
+          out: m.out === true,
+          date: m.date,
+          message: m.message ?? '',
+        })),
+      );
+      if (!found) continue;
+
+      const name = [entity.firstName, entity.lastName].filter(Boolean).join(' ').trim();
+      const entry: ReviewEntry = {
+        tgUserId: candidate.tgUserId,
+        username: entity.username ?? null,
+        displayName: name.length > 0 ? name : 'без имени',
+        about: candidate.sampleText,
+        consent: found.consent,
+        consentAsk: found.consentAsk,
+        consentAnswer: found.consentAnswer,
+        quotes: found.quotes,
+      };
+      dump.entries.push(entry);
+    }
+
+    this.logger.log(
+      `Отзывы: найдено ${dump.entries.length} из ${dump.dialogsSeen} диалогов`,
+    );
+    return dump;
+  }
+
+  /**
+   * Аватарки для карточек лендинга.
+   *
+   * Идём по диалогам и сверяем id, а не дёргаем getEntity по нику: ник
+   * человек меняет, id — нет, и access hash у нас уже есть из диалога.
+   *
+   * Фото может не быть вовсе (закрытый профиль, нет аватарки) — тогда просто
+   * не кладём в карту. Карточка должна уметь жить без картинки: падать из-за
+   * чужих настроек приватности здесь нечему.
+   */
+  public async downloadAvatars(tgUserIds: string[]): Promise<Map<string, Buffer>> {
+    const wanted = new Set(tgUserIds);
+    const out = new Map<string, Buffer>();
+    if (wanted.size === 0) return out;
+
+    const client = this.telegram.getClient();
+
+    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+      if (out.size >= wanted.size) break;
+      if (!dialog.isUser) continue;
+      const entity = dialog.entity;
+      if (!(entity instanceof Api.User)) continue;
+
+      const id = entity.id.toString();
+      if (!wanted.has(id)) continue;
+
+      try {
+        const buf = await client.downloadProfilePhoto(entity, { isBig: true });
+        await sleep(this.config.deepDelayMs);
+        if (buf && buf.length > 0) out.set(id, Buffer.from(buf as Buffer));
+      } catch (err) {
+        this.logger.warn(`Аватарка id${id} не скачалась: ${describeError(err)}`);
+      }
+    }
+
+    return out;
   }
 
   /** Идёт ли прогон outbox: параллельно запускать нельзя, см. ниже. */

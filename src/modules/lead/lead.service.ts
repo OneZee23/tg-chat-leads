@@ -560,6 +560,40 @@ export class LeadService {
    * спасибо!») получит `AUTO_POSITIVE` повторно — почти дословный дубль того,
    * что мы уже сказали. Шаблонный автоответ остаётся одноходовым.
    */
+  /**
+   * Кандидаты для сбора отзывов: только те, кто нам хоть раз ответил.
+   *
+   * Фильтр не косметический. Обход читает историю КАЖДОГО диалога с паузой,
+   * и по всей базе это тысяча чтений подряд — долго и рискованно для
+   * аккаунта, который однажды уже улетал в спамблок. Отзыв при этом может
+   * быть только у того, кто отвечал: молчуну взяться ему неоткуда.
+   */
+  public async getReviewCandidates(): Promise<Map<string, DialogCandidate>> {
+    const rows: Array<{
+      tg_user_id: string;
+      contacted_at: Date | null;
+      sample_text: string | null;
+      closed_at: Date | null;
+    }> = await this.repo.query(
+      `SELECT tg_user_id, contacted_at, sample_text, closed_at FROM tg_lead
+       WHERE contacted_at IS NOT NULL
+         AND status NOT IN ('skip', 'rejected')
+         AND (replied_at IS NOT NULL OR status IN ('replied', 'answered'))`,
+    );
+
+    return new Map(
+      rows.map((r) => [
+        String(r.tg_user_id),
+        {
+          tgUserId: String(r.tg_user_id),
+          contactedAt: r.contacted_at,
+          sampleText: r.sample_text,
+          closedAt: r.closed_at,
+        },
+      ]),
+    );
+  }
+
   public async getDialogCandidates(): Promise<Map<string, DialogCandidate>> {
     const rows: Array<{
       tg_user_id: string;

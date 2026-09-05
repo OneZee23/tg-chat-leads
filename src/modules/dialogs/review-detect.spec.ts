@@ -1,0 +1,204 @@
+import { detectReview } from './review-detect';
+import type { HistoryMessage } from './unanswered';
+
+const T0 = 1_756_000_000;
+
+function them(text: string, offset = 0): HistoryMessage {
+  return { out: false, date: T0 + offset, message: text };
+}
+function us(text: string, offset = 0): HistoryMessage {
+  return { out: true, date: T0 + offset, message: text };
+}
+
+describe('detectReview — поиск цитаты', () => {
+  it('находит развёрнутую похвалу', () => {
+    const r = detectReview([
+      us('Здравствуйте! Видел, что вы набираете учеников.'),
+      them(
+        'Все интуитивно понятно, удобно и дизайн не отвлекает от того, что важно',
+        100,
+      ),
+    ]);
+    expect(r).not.toBeNull();
+    expect(r!.quotes).toHaveLength(1);
+    expect(r!.quotes[0].text).toContain('интуитивно');
+  });
+
+  it('игнорирует короткие реплики', () => {
+    expect(detectReview([them('класс!')])).toBeNull();
+    expect(detectReview([them('удобно')])).toBeNull();
+  });
+
+  it('игнорирует простыню длиннее карточки', () => {
+    expect(detectReview([them('очень удобно, ' + 'а ещё '.repeat(80))])).toBeNull();
+  });
+
+  it('не считает отзывом вежливый отказ, даже со «спасибо»', () => {
+    expect(
+      detectReview([them('Спасибо большое, но пока не надо, мне это не нужно')]),
+    ).toBeNull();
+  });
+
+  it('не берёт наши собственные сообщения', () => {
+    expect(
+      detectReview([us('Очень удобно и понятно, попробуйте обязательно')]),
+    ).toBeNull();
+  });
+
+  it('сортирует: сильные вперёд, при равенстве — свежие', () => {
+    const r = detectReview([
+      them('Довольно удобно, мне в целом понравилось пользоваться сервисом', 10),
+      them('Очень удобно, красиво и интуитивно понятен интерфейс, нравится', 20),
+      them('Довольно удобно, мне в целом понравилось пользоваться сервисом тут', 30),
+    ]);
+    expect(r!.quotes[0].text).toContain('интуитивно');
+    expect(r!.quotes[1].at).toBe(T0 + 30);
+  });
+
+  it('хвалит, но не нас — не отзыв', () => {
+    // Живой случай: фуллстак-разработчик рассуждал о своих предпочтениях,
+    // слово «нравится» утащило его в отзывы о продукте.
+    expect(
+      detectReview([
+        them('честно, мне больше бек нравится, фронт я знаю, но там трудно'),
+      ]),
+    ).toBeNull();
+  });
+
+  it('согласие потестить — не отзыв', () => {
+    expect(
+      detectReview([
+        them('Здравствуйте, да, было бы отлично! Буду благодарна за возможность'),
+      ]),
+    ).toBeNull();
+  });
+});
+
+describe('detectReview — согласие на публикацию', () => {
+  const quote = them('Все интуитивно понятно, удобно и дизайн не отвлекает', 10);
+
+  it('без вопроса о цитате согласия нет', () => {
+    const r = detectReview([quote]);
+    expect(r!.consent).toBe('not-asked');
+    expect(r!.consentAskedAt).toBeNull();
+  });
+
+  it('явное «да» после вопроса — согласие', () => {
+    const r = detectReview([
+      quote,
+      us('Можно я приведу вашу цитату на главной, со ссылкой на вас?', 20),
+      them('Да, конечно, используйте цитату', 30),
+    ]);
+    expect(r!.consent).toBe('given');
+    expect(r!.consentAskedAt).toBe(T0 + 20);
+  });
+
+  it('«да нет, не надо» — отказ, а не согласие', () => {
+    const r = detectReview([
+      quote,
+      us('Можно я приведу вашу цитату?', 20),
+      them('да нет, не надо пока', 30),
+    ]);
+    expect(r!.consent).toBe('refused');
+  });
+
+  it('ответил не про то — согласием не считаем', () => {
+    const r = detectReview([
+      quote,
+      us('Можно я приведу вашу цитату?', 20),
+      them('а когда будет мобильное приложение?', 30),
+    ]);
+    expect(r!.consent).toBe('asked-no-answer');
+  });
+
+  it('спросили и тишина — согласия нет', () => {
+    const r = detectReview([quote, us('Можно я приведу вашу цитату?', 20)]);
+    expect(r!.consent).toBe('asked-no-answer');
+  });
+
+  it('учитывает последний вопрос, а не первый', () => {
+    const r = detectReview([
+      quote,
+      us('Можно цитату?', 20),
+      them('пока не хочу', 30),
+      us('А сейчас можно цитату?', 40),
+      them('Да, конечно', 50),
+    ]);
+    expect(r!.consent).toBe('given');
+    expect(r!.consentAskedAt).toBe(T0 + 40);
+  });
+  it('распознаёт кириллическое «да» — регресс на \\b в JS', () => {
+    const r = detectReview([
+      quote,
+      us('Можно я приведу вашу цитату?', 20),
+      them('Да', 30),
+    ]);
+    expect(r!.consent).toBe('given');
+  });
+
+  it('«Даже не знаю» — не согласие: граница слова должна работать', () => {
+    const r = detectReview([
+      quote,
+      us('Можно я приведу вашу цитату?', 20),
+      them('Даже не знаю, надо подумать', 30),
+    ]);
+    expect(r!.consent).not.toBe('given');
+  });
+  it('верно читает согласие, когда сообщения пришли от новых к старым', () => {
+    const chronological = [
+      quote,
+      us('Можно я приведу вашу цитату?', 20),
+      them('Да, конечно', 30),
+    ];
+    const r = detectReview([...chronological].reverse());
+    expect(r!.consent).toBe('given');
+    expect(r!.consentAskedAt).toBe(T0 + 20);
+  });
+  it('показывает сам разговор о согласии, а не только вердикт', () => {
+    const r = detectReview([
+      quote,
+      us('Можно я приведу вашу цитату на главной?', 20),
+      them('Да, конечно, используйте', 30),
+    ]);
+    expect(r!.consentAsk).toContain('цитату');
+    expect(r!.consentAnswer).toBe('Да, конечно, используйте');
+  });
+
+  it('без вопроса разговора нет', () => {
+    const r = detectReview([quote]);
+    expect(r!.consentAsk).toBeNull();
+    expect(r!.consentAnswer).toBeNull();
+  });
+  it('наше «поставлю цитату)» после согласия не считается новым вопросом', () => {
+    // Живой случай: разрешение терялось, потому что последним сообщением со
+    // словом «цитата» было наше же спасибо, а не вопрос.
+    const r = detectReview([
+      quote,
+      us('Можно я приведу вашу цитату на главной, со ссылкой на вас?', 20),
+      them('Да, конечно, используйте цитату', 30),
+      us('Спасибо огромное, поставлю цитату)', 40),
+      them('спасибо за продукт) мы вообще-то коллеги, хаха', 50),
+    ]);
+    expect(r!.consent).toBe('given');
+    expect(r!.consentAskedAt).toBe(T0 + 20);
+  });
+  it('«я не против» — это согласие, а не отказ', () => {
+    // Живой случай: отзыв едва не потеряли, потому что шаблон отказа
+    // «против» срабатывал внутри «не против».
+    const r = detectReview([
+      quote,
+      us('Можно я приведу вашу цитату на главной?', 20),
+      them('хорошо , я не против', 30),
+    ]);
+    expect(r!.consent).toBe('given');
+  });
+
+  it('«я против» без отрицания — по-прежнему отказ', () => {
+    const r = detectReview([
+      quote,
+      us('Можно я приведу вашу цитату на главной?', 20),
+      them('извините, я против', 30),
+    ]);
+    expect(r!.consent).toBe('refused');
+  });
+});
