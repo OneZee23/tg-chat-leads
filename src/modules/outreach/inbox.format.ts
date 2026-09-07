@@ -36,6 +36,17 @@ export interface InboxDump {
    * диалоги аккаунта»: по остальным проход не ходит.
    */
   dialogsSeen: number;
+  /** Сколько кандидатов есть в базе всего. */
+  candidatesTotal: number;
+  /**
+   * Сколько кандидатов проход НЕ увидел.
+   *
+   * Обход идёт по последним диалогам аккаунта, и старый диалог, утонувший
+   * ниже окна, становится невидимым. Молча — до тех пор, пока эту цифру не
+   * начали печатать. Живой случай: 190 человек из 1102 не осматривались, и
+   * сообщение двухнедельной давности нашлось только руками.
+   */
+  candidatesUnseen: number;
   /** Содержательные: нужен ответ. */
   dialogs: InboxDialog[];
   /** Эвристика говорит «ответа не требует»: закрывается пачкой через CLOSE. */
@@ -104,7 +115,14 @@ export function formatInboxSummary(dump: InboxDump, path: string): string {
   return [
     '',
     `Выгрузка на ${dump.createdAt}: нужен ответ — ${dump.dialogs.length}, тривиальных — ${dump.trivial.length}.`,
-    `Проверено диалогов с теми, кому писали: ${dump.dialogsSeen}. Остановка: ${dump.stoppedBecause}.`,
+    `Проверено диалогов с теми, кому писали: ${dump.dialogsSeen} из ${dump.candidatesTotal}. Остановка: ${dump.stoppedBecause}.`,
+    ...(dump.candidatesUnseen > 0
+      ? [
+          '',
+          `⚠ НЕ ОСМОТРЕНО: ${dump.candidatesUnseen}. Их диалоги утонули ниже окна обхода,`,
+          '  и неотвеченное в них не видно. Подними DIALOGS_LIMIT в .env и повтори.',
+        ]
+      : []),
     '',
     `Файл: ${path}`,
     '',

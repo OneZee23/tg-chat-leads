@@ -29,6 +29,8 @@ function dump(over: Partial<InboxDump> = {}): InboxDump {
   return {
     createdAt: '2026-09-03 14:30',
     dialogsSeen: 412,
+    candidatesTotal: 412,
+    candidatesUnseen: 0,
     dialogs: [dialog()],
     trivial: [],
     stoppedBecause: 'кандидаты закончились',
@@ -114,5 +116,26 @@ describe('контракт с парсером outbox', () => {
     );
 
     expect(extractRecordIds(rendered)).toEqual(['123456789', '987654321', '555555555']);
+  });
+});
+
+describe('предупреждение о неосмотренных', () => {
+  it('молчит, когда осмотрены все', () => {
+    const out = formatInboxSummary(dump(), 'inbox/x.md');
+    expect(out).not.toContain('НЕ ОСМОТРЕНО');
+    expect(out).toContain('412 из 412');
+  });
+
+  it('кричит, когда часть кандидатов не осмотрена', () => {
+    // Живой случай: 912 из 1102, и сообщение двухнедельной давности
+    // человек нашёл руками. Молчание тут дороже любой другой ошибки —
+    // инструменту доверяют вместо того, чтобы листать телеграм.
+    const out = formatInboxSummary(
+      dump({ dialogsSeen: 912, candidatesTotal: 1102, candidatesUnseen: 190 }),
+      'inbox/x.md',
+    );
+    expect(out).toContain('НЕ ОСМОТРЕНО: 190');
+    expect(out).toContain('912 из 1102');
+    expect(out).toContain('DIALOGS_LIMIT');
   });
 });

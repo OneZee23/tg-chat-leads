@@ -490,10 +490,17 @@ export class DialogsService {
     const dump: InboxDump = {
       createdAt: formatStamp(new Date()),
       dialogsSeen: 0,
+      candidatesTotal: candidates.size,
+      candidatesUnseen: 0,
       dialogs: [],
       trivial: [],
       stoppedBecause: 'кандидаты закончились',
     };
+
+    // Кого проход реально увидел. Без этого счётчика «кандидаты
+    // закончились» читалось как «проверены все», хотя на деле обход идёт
+    // по последним диалогам аккаунта и старые в окно не попадают.
+    const seen = new Set<string>();
 
     for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
       if (dump.dialogs.length + dump.trivial.length >= limit) {
@@ -507,6 +514,7 @@ export class DialogsService {
       const candidate = candidates.get(entity.id.toString());
       if (!candidate) continue;
       dump.dialogsSeen += 1;
+      seen.add(candidate.tgUserId);
 
       // Пред-фильтр: последнее сообщение наше или пустое — читать историю не за чем.
       const last = dialog.message;
@@ -579,6 +587,16 @@ export class DialogsService {
       else dump.dialogs.push(entry);
     }
 
+    dump.candidatesUnseen = dump.candidatesTotal - seen.size;
+    if (dump.candidatesUnseen > 0) {
+      // Предупреждение в лог И в сводку: тихая потеря входящих — худшее,
+      // что может делать этот инструмент. Человек доверяет ему вместо того,
+      // чтобы листать телеграм руками.
+      this.logger.warn(
+        `Выгрузка: не осмотрено ${dump.candidatesUnseen} кандидатов — ` +
+          `их диалоги вне окна обхода (DIALOGS_LIMIT=${this.config.limit})`,
+      );
+    }
     this.logger.log(
       `Выгрузка: нужен ответ ${dump.dialogs.length}, тривиальных ${dump.trivial.length}`,
     );
