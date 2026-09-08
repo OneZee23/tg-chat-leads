@@ -47,6 +47,18 @@ export interface InboxDump {
    * сообщение двухнедельной давности нашлось только руками.
    */
   candidatesUnseen: number;
+  /**
+   * Сколько диалогов аккаунта обход прошёл ВСЕГО — вместе с группами и
+   * чужими людьми. Если это число меньше DIALOGS_LIMIT, окно ни при чём:
+   * диалогов у аккаунта просто столько, и неосмотренных среди них нет.
+   */
+  dialogsIterated: number;
+  /**
+   * Кого не нашли — поимённо. Без этого списка причина неосмотренных
+   * угадывалась неделю: архив, лимит, неудачные отправки. С ним она
+   * проверяется одним взглядом в телеграм.
+   */
+  unseen: Array<{ tgUserId: string; username: string | null; contactedAt: Date | null }>;
   /** Содержательные: нужен ответ. */
   dialogs: InboxDialog[];
   /** Эвристика говорит «ответа не требует»: закрывается пачкой через CLOSE. */
@@ -68,7 +80,7 @@ export function formatInbox(dump: InboxDump): string {
 
   if (dump.dialogs.length === 0 && dump.trivial.length === 0) {
     lines.push('Неотвеченного нет — все, кто писал, уже получили ответ.', '');
-    return lines.join('\n');
+    return lines.join('\n') + renderUnseen(dump);
   }
 
   dump.dialogs.forEach((d) => lines.push(...renderDialog(d)));
@@ -86,7 +98,9 @@ export function formatInbox(dump: InboxDump): string {
     dump.trivial.forEach((d) => lines.push(...renderDialog(d)));
   }
 
-  return lines.join('\n');
+  // Список ненайденных — в самом конце, после тривиального: это не работа
+  // на сегодня, а материал для разбора.
+  return lines.join('\n') + renderUnseen(dump);
 }
 
 function renderDialog(d: InboxDialog): string[] {
@@ -111,6 +125,36 @@ function renderDialog(d: InboxDialog): string[] {
   return lines;
 }
 
+function renderUnseen(dump: InboxDump): string {
+  // Защитно: рендер не должен падать на неполной выгрузке из чужого мока.
+  const unseen = dump.unseen ?? [];
+  if (unseen.length === 0) return '';
+  const lines = [
+    '',
+    '---',
+    '',
+    `# Не найдены среди диалогов — ${unseen.length}`,
+    '',
+    'Помечены как «написано», но диалога с ними обход не увидел. Причины бывают',
+    'разные: чат удалён, человек заблокировал, пометка «написано» стояла',
+    'вручную. Проверь нескольких глазами в телеграме — по ним станет ясно, что',
+    'делать с остальными.',
+    '',
+  ];
+  const sorted = [...unseen].sort(
+    (a, b) => (a.contactedAt?.getTime() ?? 0) - (b.contactedAt?.getTime() ?? 0),
+  );
+  for (const u of sorted) {
+    const when = u.contactedAt
+      ? u.contactedAt.toISOString().slice(0, 10)
+      : 'дата неизвестна';
+    lines.push(
+      `- ${u.username ? '@' + u.username : 'id' + u.tgUserId}  ·  написано ${when}`,
+    );
+  }
+  return lines.join('\n') + '\n';
+}
+
 export function formatInboxSummary(dump: InboxDump, path: string): string {
   return [
     '',
@@ -119,8 +163,15 @@ export function formatInboxSummary(dump: InboxDump, path: string): string {
     ...(dump.candidatesUnseen > 0
       ? [
           '',
-          `⚠ НЕ ОСМОТРЕНО: ${dump.candidatesUnseen}. Их диалоги утонули ниже окна обхода,`,
-          '  и неотвеченное в них не видно. Подними DIALOGS_LIMIT в .env и повтори.',
+          `⚠ НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: ${dump.candidatesUnseen}. Обход прошёл ${dump.dialogsIterated} диалогов.`,
+          ...(dump.dialogsIterated >= dump.candidatesTotal
+            ? [
+                '  Окно обхода не упёрлось в лимит — этих людей нет в списке диалогов аккаунта.',
+                '  Список в конце файла: проверь по нескольким в телеграме, есть ли с ними чат.',
+              ]
+            : [
+                '  Обход мог упереться в лимит — подними DIALOGS_LIMIT в .env и повтори.',
+              ]),
         ]
       : []),
     '',

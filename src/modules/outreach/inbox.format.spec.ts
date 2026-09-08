@@ -31,6 +31,8 @@ function dump(over: Partial<InboxDump> = {}): InboxDump {
     dialogsSeen: 412,
     candidatesTotal: 412,
     candidatesUnseen: 0,
+    dialogsIterated: 500,
+    unseen: [],
     dialogs: [dialog()],
     trivial: [],
     stoppedBecause: 'кандидаты закончились',
@@ -131,11 +133,56 @@ describe('предупреждение о неосмотренных', () => {
     // человек нашёл руками. Молчание тут дороже любой другой ошибки —
     // инструменту доверяют вместо того, чтобы листать телеграм.
     const out = formatInboxSummary(
-      dump({ dialogsSeen: 912, candidatesTotal: 1102, candidatesUnseen: 190 }),
+      dump({
+        dialogsSeen: 912,
+        candidatesTotal: 1102,
+        candidatesUnseen: 190,
+        dialogsIterated: 1000,
+      }),
       'inbox/x.md',
     );
-    expect(out).toContain('НЕ ОСМОТРЕНО: 190');
+    expect(out).toContain('НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: 190');
     expect(out).toContain('912 из 1102');
+    // Прошли меньше диалогов, чем кандидатов → возможно, упёрлись в лимит.
     expect(out).toContain('DIALOGS_LIMIT');
+  });
+
+  it('когда обход прошёл больше диалогов, чем кандидатов, лимит не винит', () => {
+    // Живой случай: лимит 5000, прошли 1200 диалогов, а 168 кандидатов всё
+    // равно не нашлись. Совет «подними лимит» здесь врал бы — их просто нет
+    // среди диалогов аккаунта.
+    const out = formatInboxSummary(
+      dump({
+        dialogsSeen: 979,
+        candidatesTotal: 1147,
+        candidatesUnseen: 168,
+        dialogsIterated: 1200,
+      }),
+      'inbox/x.md',
+    );
+    expect(out).toContain('НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: 168');
+    expect(out).not.toContain('DIALOGS_LIMIT');
+    expect(out).toContain('нет в списке диалогов');
+  });
+});
+
+describe('список ненайденных в конце файла', () => {
+  it('печатает ников с датой, старые первыми', () => {
+    const out = formatInbox(
+      dump({
+        candidatesUnseen: 2,
+        unseen: [
+          { tgUserId: '2', username: 'late', contactedAt: new Date('2026-09-01') },
+          { tgUserId: '1', username: null, contactedAt: new Date('2026-08-10') },
+        ],
+      }),
+    );
+    expect(out).toContain('# Не найдены среди диалогов — 2');
+    expect(out.indexOf('id1')).toBeLessThan(out.indexOf('@late'));
+    expect(out).toContain('написано 2026-08-10');
+  });
+
+  it('без ненайденных секции нет', () => {
+    expect(formatInbox(dump())).not.toContain('Не найдены среди диалогов');
   });
 });

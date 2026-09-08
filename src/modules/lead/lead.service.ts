@@ -25,6 +25,8 @@ export interface UpsertLeadInput {
 
 export interface DialogCandidate {
   tgUserId: string;
+  /** Для человека в отчёте: id ни о чём не говорит, ник — говорит. */
+  username: string | null;
   contactedAt: Date | null;
   sampleText: string | null;
   /** Когда закрыли без ответа; двигает курсор неотвеченного вперёд. */
@@ -571,11 +573,12 @@ export class LeadService {
   public async getReviewCandidates(): Promise<Map<string, DialogCandidate>> {
     const rows: Array<{
       tg_user_id: string;
+      username: string | null;
       contacted_at: Date | null;
       sample_text: string | null;
       closed_at: Date | null;
     }> = await this.repo.query(
-      `SELECT tg_user_id, contacted_at, sample_text, closed_at FROM tg_lead
+      `SELECT tg_user_id, username, contacted_at, sample_text, closed_at FROM tg_lead
        WHERE contacted_at IS NOT NULL
          AND status NOT IN ('skip', 'rejected')
          AND (replied_at IS NOT NULL OR status IN ('replied', 'answered'))`,
@@ -586,6 +589,7 @@ export class LeadService {
         String(r.tg_user_id),
         {
           tgUserId: String(r.tg_user_id),
+          username: r.username ?? null,
           contactedAt: r.contacted_at,
           sampleText: r.sample_text,
           closedAt: r.closed_at,
@@ -597,11 +601,12 @@ export class LeadService {
   public async getDialogCandidates(): Promise<Map<string, DialogCandidate>> {
     const rows: Array<{
       tg_user_id: string;
+      username: string | null;
       contacted_at: Date | null;
       sample_text: string | null;
       closed_at: Date | null;
     }> = await this.repo.query(
-      `SELECT tg_user_id, contacted_at, sample_text, closed_at FROM tg_lead
+      `SELECT tg_user_id, username, contacted_at, sample_text, closed_at FROM tg_lead
        WHERE contacted_at IS NOT NULL
          AND status NOT IN ('skip', 'rejected')`,
     );
@@ -611,6 +616,7 @@ export class LeadService {
         String(r.tg_user_id),
         {
           tgUserId: String(r.tg_user_id),
+          username: r.username ?? null,
           contactedAt: r.contacted_at,
           sampleText: r.sample_text,
           closedAt: r.closed_at,

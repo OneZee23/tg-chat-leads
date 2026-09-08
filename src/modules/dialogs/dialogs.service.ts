@@ -492,6 +492,8 @@ export class DialogsService {
       dialogsSeen: 0,
       candidatesTotal: candidates.size,
       candidatesUnseen: 0,
+      dialogsIterated: 0,
+      unseen: [],
       dialogs: [],
       trivial: [],
       stoppedBecause: 'кандидаты закончились',
@@ -503,6 +505,7 @@ export class DialogsService {
     const seen = new Set<string>();
 
     for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+      dump.dialogsIterated += 1;
       if (dump.dialogs.length + dump.trivial.length >= limit) {
         dump.stoppedBecause = `упёрлись в лимит выгрузки (${limit})`;
         break;
@@ -588,6 +591,15 @@ export class DialogsService {
     }
 
     dump.candidatesUnseen = dump.candidatesTotal - seen.size;
+    for (const [id, c] of candidates) {
+      if (!seen.has(id)) {
+        dump.unseen.push({
+          tgUserId: c.tgUserId,
+          username: c.username ?? null,
+          contactedAt: c.contactedAt,
+        });
+      }
+    }
     if (dump.candidatesUnseen > 0) {
       // Предупреждение в лог И в сводку: тихая потеря входящих — худшее,
       // что может делать этот инструмент. Человек доверяет ему вместо того,
