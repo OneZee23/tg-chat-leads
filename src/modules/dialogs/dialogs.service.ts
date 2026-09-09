@@ -493,6 +493,7 @@ export class DialogsService {
       candidatesTotal: candidates.size,
       candidatesUnseen: 0,
       dialogsIterated: 0,
+      dialogsLimit: this.config.limit,
       unseen: [],
       dialogs: [],
       trivial: [],

@@ -32,6 +32,7 @@ function dump(over: Partial<InboxDump> = {}): InboxDump {
     candidatesTotal: 412,
     candidatesUnseen: 0,
     dialogsIterated: 500,
+    dialogsLimit: 5000,
     unseen: [],
     dialogs: [dialog()],
     trivial: [],
@@ -138,31 +139,35 @@ describe('предупреждение о неосмотренных', () => {
         candidatesTotal: 1102,
         candidatesUnseen: 190,
         dialogsIterated: 1000,
+        dialogsLimit: 1000,
       }),
       'inbox/x.md',
     );
     expect(out).toContain('НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: 190');
     expect(out).toContain('912 из 1102');
-    // Прошли меньше диалогов, чем кандидатов → возможно, упёрлись в лимит.
+    // Обход упёрся ровно в лимит — вот тут совет поднять его уместен.
     expect(out).toContain('DIALOGS_LIMIT');
   });
 
-  it('когда обход прошёл больше диалогов, чем кандидатов, лимит не винит', () => {
-    // Живой случай: лимит 5000, прошли 1200 диалогов, а 168 кандидатов всё
-    // равно не нашлись. Совет «подними лимит» здесь врал бы — их просто нет
-    // среди диалогов аккаунта.
+  it('не винит лимит, если до него не дошли', () => {
+    // Живой случай 09.09: лимит 5000, прошли 1141 диалог, а 233 кандидата
+    // всё равно не нашлись. Совет «подними лимит» тут врал: сравнивать надо
+    // с лимитом, а не с числом кандидатов, которых больше пройденных
+    // диалогов просто потому, что часть чатов удалена.
     const out = formatInboxSummary(
       dump({
-        dialogsSeen: 979,
-        candidatesTotal: 1147,
-        candidatesUnseen: 168,
-        dialogsIterated: 1200,
+        dialogsSeen: 959,
+        candidatesTotal: 1192,
+        candidatesUnseen: 233,
+        dialogsIterated: 1141,
+        dialogsLimit: 5000,
       }),
       'inbox/x.md',
     );
-    expect(out).toContain('НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: 168');
+    expect(out).toContain('НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: 233');
+    expect(out).toContain('1141 диалогов из 5000');
     expect(out).not.toContain('DIALOGS_LIMIT');
-    expect(out).toContain('нет в списке диалогов');
+    expect(out).toContain('диалоги у аккаунта закончились раньше');
   });
 });
 
