@@ -1,4 +1,5 @@
 import {
+  MAX_REPLY_LEN,
   OutboxParseError,
   extractRecordIds,
   parseOutbox,
@@ -151,5 +152,35 @@ describe('parseOutbox', () => {
     // вроде «# Неотвеченное на …» легальны. Не валидируем там.
     const ids = extractRecordIds('# Заголовок\n## id1\n### Подзаголовок\n## id2\n');
     expect(ids).toEqual(['1', '2']);
+  });
+
+  describe('FOLLOWUP — пишем первыми тому, кто уже в переписке', () => {
+    it('разбирается как отдельная директива с телом', () => {
+      const entries = parseOutbox(
+        [
+          '## id123456789 @teacher',
+          '',
+          'FOLLOWUP',
+          'Можно поставить вашу цитату на главной?',
+        ].join('\n'),
+      );
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].directive).toBe('followup');
+      expect(entries[0].body).toBe('Можно поставить вашу цитату на главной?');
+    });
+
+    it('без текста роняет разбор — отправлять нечего', () => {
+      expect(() =>
+        parseOutbox(['## id123456789 @teacher', '', 'FOLLOWUP', ''].join('\n')),
+      ).toThrow(/FOLLOWUP без текста/);
+    });
+
+    it('слишком длинный текст роняет разбор, как и у SEND', () => {
+      const long = 'а'.repeat(MAX_REPLY_LEN + 1);
+      expect(() =>
+        parseOutbox(['## id123456789 @teacher', '', 'FOLLOWUP', long].join('\n')),
+      ).toThrow(/лимит/);
+    });
   });
 });

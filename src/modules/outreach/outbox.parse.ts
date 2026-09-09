@@ -12,13 +12,16 @@
  * где остановились и что переделывать.
  */
 
-export type OutboxDirective = 'send' | 'close' | 'ask';
+export type OutboxDirective = 'send' | 'close' | 'ask' | 'followup';
 
 export interface OutboxEntry {
   tgUserId: string;
   username: string | null;
   directive: OutboxDirective;
-  /** Текст ответа для send; вопрос к автору для ask; комментарий для close. */
+  /**
+   * Текст ответа для send и followup; вопрос к автору для ask; комментарий
+   * для close.
+   */
   body: string;
 }
 
@@ -35,6 +38,11 @@ const DIRECTIVES: Record<string, OutboxDirective> = {
   send: 'send',
   close: 'close',
   ask: 'ask',
+  // FOLLOWUP — написать первым тому, кто уже в переписке и кому мы уже
+  // ответили. SEND туда не годится: он отвечает на неотвеченное и человека
+  // с пустым хвостом молча пропускает. Нужен, когда повод возник у нас —
+  // спросить разрешение на цитату, сказать, что просьба сделана.
+  followup: 'followup',
 };
 
 interface RawRecord {
@@ -107,7 +115,8 @@ function toEntry(record: RawRecord): OutboxEntry {
   const firstMeaningful = record.lines.findIndex((l) => l.trim().length > 0);
   if (firstMeaningful === -1) {
     throw new OutboxParseError(
-      `id${record.tgUserId}: после заголовка нет директивы. Нужна строка SEND, CLOSE или ASK.`,
+      `id${record.tgUserId}: после заголовка нет директивы. ` +
+        `Нужна строка SEND, FOLLOWUP, CLOSE или ASK.`,
     );
   }
 
@@ -115,7 +124,8 @@ function toEntry(record: RawRecord): OutboxEntry {
   const directive = DIRECTIVES[token];
   if (!directive) {
     throw new OutboxParseError(
-      `id${record.tgUserId}: «${record.lines[firstMeaningful].trim()}» — не директива. Ожидается SEND, CLOSE или ASK.`,
+      `id${record.tgUserId}: «${record.lines[firstMeaningful].trim()}» — не директива. ` +
+        `Ожидается SEND, FOLLOWUP, CLOSE или ASK.`,
     );
   }
 
@@ -124,13 +134,14 @@ function toEntry(record: RawRecord): OutboxEntry {
     .join('\n')
     .trim();
 
-  if (directive === 'send' && body.length === 0) {
+  const goesToTelegram = directive === 'send' || directive === 'followup';
+  if (goesToTelegram && body.length === 0) {
     throw new OutboxParseError(
-      `id${record.tgUserId}: SEND без текста. Нечего отправлять.`,
+      `id${record.tgUserId}: ${directive.toUpperCase()} без текста. Нечего отправлять.`,
     );
   }
-  // Лимит только для SEND — он один уходит в Telegram. ASK и CLOSE остаются для автора.
-  if (directive === 'send' && body.length > MAX_REPLY_LEN) {
+  // Лимит только для того, что уходит в Telegram. ASK и CLOSE остаются автору.
+  if (goesToTelegram && body.length > MAX_REPLY_LEN) {
     throw new OutboxParseError(
       `id${record.tgUserId}: текст ${body.length} символов, лимит ${MAX_REPLY_LEN}.`,
     );

@@ -523,7 +523,7 @@ export class DialogsService {
       // Пред-фильтр: последнее сообщение наше или пустое — читать историю не за чем.
       const last = dialog.message;
       if (!last || last.out !== false) continue;
-      if ((last.message ?? '').trim().length === 0) continue;
+      if (messageText(last).length === 0) continue;
 
       let messages;
       try {
@@ -542,7 +542,7 @@ export class DialogsService {
         messages.map((m: Api.Message): HistoryMessage => ({
           out: m.out === true,
           date: m.date,
-          message: m.message ?? '',
+          message: messageText(m),
         })),
         cursorFloorSec(candidate),
       );
@@ -843,7 +843,10 @@ export class DialogsService {
       // наш ответ («спасибо!»), неотвеченное снова непусто, а курсор стоит на
       // нашем же сообщении — от повторной отправки того же текста защищает
       // ровно сравнение со стампом. Нет стампа — нет защиты.
-      if (options.dumpedAtSec === null) {
+      //
+      // FOLLOWUP сюда не попадает: у него защита от дубля своя и от стампа
+      // не зависит — сверка текста с нашими исходящими в этом же диалоге.
+      if (entry.directive === 'send' && options.dumpedAtSec === null) {
         pending.delete(entry.tgUserId);
         result.skipped += 1;
         result.entries.push(
@@ -918,32 +921,50 @@ export class DialogsService {
         continue;
       }
 
-      const slice = sliceUnanswered(
-        messages.map((m: Api.Message): HistoryMessage => ({
-          out: m.out === true,
-          date: m.date,
-          message: m.message ?? '',
-        })),
-        cursorFloorSec(candidate),
-      );
-
-      // Неотвеченного нет — значит после выгрузки ты ответил руками.
-      if (slice.incoming.length === 0) {
-        result.skipped += 1;
-        result.entries.push(sendEntry(entry, 'skipped', 'ты ответил руками'));
-        continue;
-      }
-
-      // Человек написал ещё раз после выгрузки: черновик отвечает на устаревшую
-      // реплику, а это выглядит как невнимательность. Пусть попадёт в следующий
-      // inbox уже с новым контекстом.
-      const newestSec = slice.incoming[slice.incoming.length - 1].date;
-      if (options.dumpedAtSec !== null && newestSec > options.dumpedAtSec) {
-        result.skipped += 1;
-        result.entries.push(
-          sendEntry(entry, 'skipped', 'написал ещё раз после выгрузки'),
+      if (entry.directive === 'followup') {
+        // Повод написать возник у НАС, а не у человека: неотвеченного в
+        // диалоге нет по построению, и guard'ы SEND здесь неприменимы.
+        // Вместо них — сверка текста: ровно это сообщение мы ему уже
+        // отправляли? Защита не зависит ни от курсора, ни от стампа файла,
+        // поэтому переживает повторный запуск той же пачки.
+        const already = messages.some(
+          (m: Api.Message) => m.out === true && sameText(m.message ?? '', entry.body),
         );
-        continue;
+        if (already) {
+          result.skipped += 1;
+          result.entries.push(
+            sendEntry(entry, 'skipped', 'этот текст ему уже отправляли'),
+          );
+          continue;
+        }
+      } else {
+        const slice = sliceUnanswered(
+          messages.map((m: Api.Message): HistoryMessage => ({
+            out: m.out === true,
+            date: m.date,
+            message: m.message ?? '',
+          })),
+          cursorFloorSec(candidate),
+        );
+
+        // Неотвеченного нет — значит после выгрузки ты ответил руками.
+        if (slice.incoming.length === 0) {
+          result.skipped += 1;
+          result.entries.push(sendEntry(entry, 'skipped', 'ты ответил руками'));
+          continue;
+        }
+
+        // Человек написал ещё раз после выгрузки: черновик отвечает на устаревшую
+        // реплику, а это выглядит как невнимательность. Пусть попадёт в следующий
+        // inbox уже с новым контекстом.
+        const newestSec = slice.incoming[slice.incoming.length - 1].date;
+        if (options.dumpedAtSec !== null && newestSec > options.dumpedAtSec) {
+          result.skipped += 1;
+          result.entries.push(
+            sendEntry(entry, 'skipped', 'написал ещё раз после выгрузки'),
+          );
+          continue;
+        }
       }
 
       if (options.dryRun) {
@@ -974,12 +995,16 @@ export class DialogsService {
       // выгрузка увидит наше исходящее и не предложит ответить второй раз.
       result.sent += 1;
       result.entries.push(sendEntry(entry, 'sent'));
-      try {
-        await this.leads.markAnswered(id);
-      } catch (err) {
-        this.logger.error(
-          `Ответ ушёл id${id}, но markAnswered упал: ${describeError(err)}`,
-        );
+      // markAnswered — только для ответа на входящее. FOLLOWUP пишем первыми,
+      // и помечать им «мы ответили» нечего: человек нам ничего не писал.
+      if (entry.directive !== 'followup') {
+        try {
+          await this.leads.markAnswered(id);
+        } catch (err) {
+          this.logger.error(
+            `Ответ ушёл id${id}, но markAnswered упал: ${describeError(err)}`,
+          );
+        }
       }
 
       // Джиттер, а не ровная пауза: ровный ритм запросов — сам по себе
@@ -1074,6 +1099,53 @@ function cursorFloorSec(candidate: {
 
 function toUnixSec(at: Date | null): number {
   return at ? Math.floor(at.getTime() / 1000) : 0;
+}
+
+/**
+ * Текст сообщения для выгрузки — с меткой вместо пустоты у вложений.
+ *
+ * Голосовое, кружок, фото и файл приходят с ПУСТЫМ `message`, а оба фильтра
+ * пустого текста (пред-фильтр диалога и `sliceUnanswered`) выбрасывали такие
+ * сообщения молча. Человек присылал голосовое — и для инструмента просто
+ * исчезал. Живой случай 09.09: руководитель репетиторского центра записал
+ * двухминутное голосовое с вопросом, а нашли его только глазами в телеграме.
+ *
+ * Расшифровать мы не умеем, поэтому подставляем метку. Она длиннее
+ * NEUTRAL_CLEAR_MAXLEN, поэтому эвристика не закроет такой диалог как
+ * «короткое ок» — он попадёт в «нужен ответ», где его и увидит человек.
+ *
+ * Стикер меткой не помечаем: это не вопрос, и в выгрузке он был бы шумом.
+ */
+function messageText(m: Api.Message): string {
+  const text = (m.message ?? '').trim();
+  if (text.length > 0) return text;
+  const label = mediaLabel(m);
+  return label ? `[${label} — расшифровки нет, нужно открыть в телеграме]` : '';
+}
+
+function mediaLabel(m: Api.Message): string | null {
+  // Свойства-хелперы GramJS (voice, videoNote, photo…) в типах объявлены
+  // не все, поэтому читаем через индекс: ошибиться тут безопасно — в худшем
+  // случае получим общее «вложение».
+  const msg = m as unknown as Record<string, unknown>;
+  if (!msg.media) return null;
+  if (msg.voice) return 'голосовое сообщение';
+  if (msg.videoNote) return 'видеосообщение';
+  if (msg.sticker) return null;
+  if (msg.photo) return 'фото';
+  if (msg.video) return 'видео';
+  if (msg.document) return 'файл';
+  return 'вложение';
+}
+
+/**
+ * Тот же ли это текст. Сравниваем по схлопнутым пробелам: Telegram отдаёт
+ * отправленное сообщение слово в слово, но перевод строки в конце и двойные
+ * пробелы из markdown-файла до него не доезжают.
+ */
+function sameText(a: string, b: string): boolean {
+  const norm = (t: string) => t.replace(/\s+/g, ' ').trim();
+  return norm(a).length > 0 && norm(a) === norm(b);
 }
 
 function describeError(err: unknown): string {

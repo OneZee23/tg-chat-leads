@@ -65,6 +65,8 @@ function getPreviewLabel(directive: OutboxDirective): string {
       return 'закрою без ответа';
     case 'ask':
       return 'оставлю тебе';
+    case 'followup':
+      return 'напишу первым';
   }
 }
 
