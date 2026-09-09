@@ -15,6 +15,13 @@ export interface ParsedReview {
   displayName: string;
   /** Кем человек себя называет. Пусто — на карточке будет «Преподаватель». */
   role: string;
+  /**
+   * Куда ведёт имя на карточке. По умолчанию строка `- ссылка:` в отчёте
+   * заполнена личкой (t.me/<username>), но человек вправе попросить другое —
+   * канал вместо лички, например. Тогда строку правят руками, и берём её.
+   * Пусто — ссылки на карточке не будет вовсе.
+   */
+  link: string;
   quote: string;
   /** Из какой секции файла запись. Именной карточкой публикуем только `given`. */
   section: 'given' | 'pending' | 'refused';
@@ -30,6 +37,7 @@ export interface ParsedReview {
 const HEAD = /^##\s+id(\d{1,20})(?:\s+@?([A-Za-z0-9_]{1,64}))?\s*$/;
 const NAME = /^-\s*имя:\s*(.+)$/;
 const ROLE = /^-\s*роль:\s*(.*)$/;
+const LINK = /^-\s*ссылка:\s*(.*)$/;
 const AT = /^\s{2}\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}\s*$/;
 const QUOTE_LINE = /^\s{4}(.*)$/;
 const SECTION = /^#\s+(.+?)(?:\s+—\s*\d+)?\s*$/;
@@ -96,6 +104,7 @@ export function parseReviews(raw: string): ParsedReview[] {
         username: head[2] ?? null,
         displayName: '',
         role: '',
+        link: '',
         quote: '',
         section,
         directive: 'SKIP',
@@ -114,6 +123,14 @@ export function parseReviews(raw: string): ParsedReview[] {
     const role = ROLE.exec(line);
     if (role) {
       current.role = role[1].trim();
+      continue;
+    }
+
+    const link = LINK.exec(line);
+    if (link) {
+      const value = link[1].trim();
+      // Заглушку «— (нет username…)» из отчёта за ссылку не считаем.
+      current.link = /^https:\/\/t\.me\//.test(value) ? value : '';
       continue;
     }
 

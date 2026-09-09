@@ -82,6 +82,27 @@ describe('parseReviews', () => {
     expect(q).not.toContain('вторая цитата');
   });
 
+  it('ссылка берётся из отчёта — человек мог попросить канал вместо лички', () => {
+    // По умолчанию в отчёте стоит t.me/<username>, но правится руками:
+    // @abosharova прямо попросила вести на её канал, а не в личку.
+    const rows = parseReviews(
+      FILE.replace('- ссылка: https://t.me/vera', '- ссылка: https://t.me/vera_channel'),
+    );
+    expect(rows[0].link).toBe('https://t.me/vera_channel');
+  });
+
+  it('заглушка вместо ссылки ссылкой не считается', () => {
+    // У человека без username выгрузка печатает «— (нет username…)».
+    // Утащить это на карточку как href было бы хуже, чем не дать ссылку.
+    const rows = parseReviews(
+      FILE.replace(
+        '- ссылка: https://t.me/vera',
+        '- ссылка: — (нет username, аватарку не забрать)',
+      ),
+    );
+    expect(rows[0].link).toBe('');
+  });
+
   it('падает, если у записи нет директивы', () => {
     expect(() => parseReviews(FILE.replace('PUBLISH\n', ''))).toThrow(ReviewsParseError);
   });

@@ -215,7 +215,11 @@ export class OutreachService {
       return {
         name: display.length > 0 ? display : null,
         role: r.role.length > 0 ? r.role : null,
-        link: display.length > 0 && r.username ? `https://t.me/${r.username}` : null,
+        // Ссылку берём из отчёта: там по умолчанию личка, но человек мог
+        // попросить вести на канал — тогда строку правят руками, и его
+        // просьбу надо выполнить, а не подставить личку молча.
+        // На анонимной карточке ссылки нет по определению, здесь только именные.
+        link: display.length > 0 && r.link.length > 0 ? r.link : null,
         avatar,
         quote: r.quote,
       };
