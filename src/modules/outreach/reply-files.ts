@@ -189,6 +189,23 @@ export function writeTestimonialsData(content: string, baseDir = process.cwd()):
   return path;
 }
 
+/**
+ * Аватарка, положенная руками, — она главнее скачанной из телеграма.
+ *
+ * Человек может прислать в переписке своё фото и попросить поставить именно
+ * его: аватарка в профиле у него может быть другой или её может не быть
+ * вовсе. Скачать присланное в чат выгрузка не умеет (downloadProfilePhoto
+ * берёт только профиль), поэтому такой файл кладут в статику руками.
+ *
+ * Без этой проверки следующая же выгрузка молча затирала бы его аватаркой из
+ * профиля — и никто бы не заметил, потому что карточка осталась бы с фото,
+ * просто не с тем. Файл `<ник>.custom.jpg` выгрузка не трогает никогда.
+ */
+export function customTestimonialAvatar(dir: string, key: string): string | null {
+  assertSafeName(`${key}.custom.jpg`);
+  return existsSync(join(dir, `${key}.custom.jpg`)) ? `${key}.custom.jpg` : null;
+}
+
 export function writeTestimonial(
   dir: string,
   fileName: string,

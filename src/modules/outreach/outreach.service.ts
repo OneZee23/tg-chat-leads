@@ -39,6 +39,7 @@ import {
   testimonialsImagesDir,
   writeReviews,
   writeTestimonial,
+  customTestimonialAvatar,
   writeTestimonialsData,
   UnsafeFileNameError,
 } from '@modules/outreach/reply-files';
@@ -205,11 +206,18 @@ export class OutreachService {
 
     const namedCards = named.map((r) => {
       const key = r.username ?? `id${r.tgUserId}`;
-      const buf = avatars.get(r.tgUserId);
       let avatar: string | null = null;
-      if (buf) {
-        writeTestimonial(imagesDir, `${key}.jpg`, buf);
-        avatar = `/testimonials/${key}.jpg`;
+      // Положенное руками фото главнее скачанного из профиля и не
+      // перезаписывается — см. customTestimonialAvatar.
+      const custom = customTestimonialAvatar(imagesDir, key);
+      if (custom) {
+        avatar = `/testimonials/${custom}`;
+      } else {
+        const buf = avatars.get(r.tgUserId);
+        if (buf) {
+          writeTestimonial(imagesDir, `${key}.jpg`, buf);
+          avatar = `/testimonials/${key}.jpg`;
+        }
       }
       const display = cleanName(r.displayName);
       return {

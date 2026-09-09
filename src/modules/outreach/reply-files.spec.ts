@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  customTestimonialAvatar,
   UnsafeFileNameError,
   assertSafeName,
   inboxFileName,
@@ -143,5 +144,30 @@ describe('writeInbox / readOutbox / newestOutboxName', () => {
       writeFileSync(join(base, 'outbox', name), 'x', 'utf8');
     }
     expect(newestOutboxName(base)).toBeNull();
+  });
+});
+
+describe('customTestimonialAvatar', () => {
+  function tmp(): string {
+    return mkdtempSync(join(tmpdir(), 'leadgen-avatars-'));
+  }
+
+  it('видит положенный руками файл — выгрузка его не перезапишет', () => {
+    // Человек прислал фото в переписку, а не поставил в профиль. Скачать
+    // такое выгрузка не умеет, файл кладут руками — и он должен пережить
+    // следующий прогон.
+    const dir = tmp();
+    writeFileSync(join(dir, 'AnyaStuky.custom.jpg'), 'binary');
+    expect(customTestimonialAvatar(dir, 'AnyaStuky')).toBe('AnyaStuky.custom.jpg');
+  });
+
+  it('обычную скачанную аватарку за ручную не считает', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'AnyaStuky.jpg'), 'binary');
+    expect(customTestimonialAvatar(dir, 'AnyaStuky')).toBeNull();
+  });
+
+  it('файла нет — null, а не падение', () => {
+    expect(customTestimonialAvatar(tmp(), 'nobody')).toBeNull();
   });
 });
