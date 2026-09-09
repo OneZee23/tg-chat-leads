@@ -50,7 +50,18 @@ function options(over: Record<string, unknown> = {}) {
 function makeService(
   over: {
     dialogs?: unknown[];
-    messages?: Array<{ out: boolean; date: number; message: string }>;
+    // media/voice/photo/sticker — то, что GramJS кладёт рядом с пустым
+    // message у вложений. Отправщик читает их через mediaLabel, поэтому в
+    // фикстурах они должны быть выразимы.
+    messages?: Array<{
+      out: boolean;
+      date: number;
+      message: string;
+      media?: unknown;
+      voice?: unknown;
+      photo?: unknown;
+      sticker?: unknown;
+    }>;
     candidates?: Map<string, unknown>;
   } = {},
 ) {
@@ -359,6 +370,65 @@ describe('sendPreparedReplies', () => {
 
     expect(client.sendMessage).not.toHaveBeenCalled();
     expect(result.skipped).toBe(1);
+  });
+
+  it('голосовое без подписи — это ответ, а не пустота: черновик уходит', async () => {
+    // Регресс 09.09. Отправка строила историю из сырого m.message, а
+    // sliceUnanswered выбрасывает сообщения с пустым текстом. У голосового и
+    // фото текста нет, поэтому входящих не находилось совсем и человек
+    // получал вердикт «ты ответил руками» — то есть подготовленный ответ ему
+    // не уходил НИКОГДА. Выгрузка inbox при этом такие сообщения показывала:
+    // два места делали одно и то же по-разному. Так три недели провисели
+    // двое, приславшие голосовое и фотографию.
+    const { service, client } = makeService({
+      dialogs: [dialog('1', 'nick')],
+      messages: [
+        { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
+        // Ровно то, что отдаёт GramJS на голосовое: текста нет, есть media.
+        { out: false, date: DUMPED_AT - 600, message: '', media: {}, voice: true },
+      ],
+      candidates: new Map([candidate('1')]),
+    });
+
+    const result = await service.sendPreparedReplies([entry()], options());
+
+    expect(result.sent).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('фото без подписи — тоже ответ', async () => {
+    const { service, client } = makeService({
+      dialogs: [dialog('1', 'nick')],
+      messages: [
+        { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
+        { out: false, date: DUMPED_AT - 600, message: '', media: {}, photo: {} },
+      ],
+      candidates: new Map([candidate('1')]),
+    });
+
+    const result = await service.sendPreparedReplies([entry()], options());
+
+    expect(result.sent).toBe(1);
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('стикер ответом не считается — на него отвечать нечем', async () => {
+    // mediaLabel намеренно возвращает null для стикера: подписи у него нет,
+    // и трактовать его как реплику, требующую ответа, было бы хуже молчания.
+    const { service, client } = makeService({
+      dialogs: [dialog('1', 'nick')],
+      messages: [
+        { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
+        { out: false, date: DUMPED_AT - 600, message: '', media: {}, sticker: {} },
+      ],
+      candidates: new Map([candidate('1')]),
+    });
+
+    const result = await service.sendPreparedReplies([entry()], options());
+
+    expect(result.sent).toBe(0);
+    expect(client.sendMessage).not.toHaveBeenCalled();
   });
 
   it('на время прогона взводится латч и снимается после', async () => {

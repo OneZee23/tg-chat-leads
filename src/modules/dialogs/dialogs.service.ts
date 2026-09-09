@@ -538,14 +538,7 @@ export class DialogsService {
         continue;
       }
 
-      const slice = sliceUnanswered(
-        messages.map((m: Api.Message): HistoryMessage => ({
-          out: m.out === true,
-          date: m.date,
-          message: messageText(m),
-        })),
-        cursorFloorSec(candidate),
-      );
+      const slice = sliceUnanswered(toHistory(messages), cursorFloorSec(candidate));
 
       if (slice.incoming.length === 0) continue;
 
@@ -938,14 +931,7 @@ export class DialogsService {
           continue;
         }
       } else {
-        const slice = sliceUnanswered(
-          messages.map((m: Api.Message): HistoryMessage => ({
-            out: m.out === true,
-            date: m.date,
-            message: m.message ?? '',
-          })),
-          cursorFloorSec(candidate),
-        );
+        const slice = sliceUnanswered(toHistory(messages), cursorFloorSec(candidate));
 
         // Неотвеченного нет — значит после выгрузки ты ответил руками.
         if (slice.incoming.length === 0) {
@@ -1116,6 +1102,26 @@ function toUnixSec(at: Date | null): number {
  *
  * Стикер меткой не помечаем: это не вопрос, и в выгрузке он был бы шумом.
  */
+/**
+ * История диалога в виде, который понимает sliceUnanswered.
+ *
+ * Ровно одна функция на оба места, где мы это делаем, — выгрузку inbox и
+ * отправку outbox. Раньше их было две, и они разъехались: выгрузка брала
+ * текст через messageText (голосовое и фото превращаются в подпись-заглушку),
+ * а отправка — сырой m.message. Из-за этого sliceUnanswered у отправщика
+ * считал сообщение пустым, входящих не находил и объявлял «ты ответил
+ * руками» — то есть человек, приславший голосовое или фото без подписи, не
+ * получал подготовленный ответ НИКОГДА. Так молча висели три недели два
+ * живых диалога: в одном пришло фото, в другом голосовое.
+ */
+function toHistory(messages: Api.Message[]): HistoryMessage[] {
+  return messages.map((m) => ({
+    out: m.out === true,
+    date: m.date,
+    message: messageText(m),
+  }));
+}
+
 function messageText(m: Api.Message): string {
   const text = (m.message ?? '').trim();
   if (text.length > 0) return text;
