@@ -41,7 +41,9 @@
     "rescore:apply": "ts-node scripts/rescore.ts --apply",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
-    "typeorm": "sh typeorm.sh"
+    "typeorm": "sh typeorm.sh",
+    "research": "sh scripts/research.sh",
+    "research:status": "curl -sS 'http://127.0.0.1:3010/research/status'"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",

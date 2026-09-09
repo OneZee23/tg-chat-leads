@@ -8,6 +8,7 @@ import { AccountModule } from '@modules/account/account.module';
 import { DialogsModule } from '@modules/dialogs/dialogs.module';
 import { LeadModule } from '@modules/lead/lead.module';
 import { OutreachModule } from '@modules/outreach/outreach.module';
+import { ResearchModule } from '@modules/research/research.module';
 import { ScannerModule } from '@modules/scanner/scanner.module';
 import { SenderModule } from '@modules/sender/sender.module';
 import { TelegramModule } from '@modules/telegram/telegram.module';
@@ -19,6 +20,7 @@ import { TelegramModule } from '@modules/telegram/telegram.module';
     TelegramModule,
     LeadModule,
     ScannerModule,
+    ResearchModule,
     DialogsModule,
     OutreachModule,
     AccountModule,
