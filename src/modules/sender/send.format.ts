@@ -14,7 +14,13 @@ import { SendReport } from '@modules/sender/sender.service';
 export interface SendStatusView {
   running: boolean;
   dryRun: boolean;
-  dailyBudget: { limit: number; used: number; remaining: number; resetsAt: Date | null };
+  dailyBudget: {
+    limit: number;
+    used: number;
+    remaining: number;
+    unlimited: boolean;
+    resetsAt: Date | null;
+  };
   scheduler: { active: boolean; window: string; nextSendAt: string | null };
   floodSummary: string;
   floodActive: number;
@@ -46,7 +52,9 @@ export function formatSendStatus(s: SendStatusView): string {
     `  Ждут ответа (по базе): ${s.awaitingReply}`,
     `  В очереди на отправку: ${s.queued}`,
     '',
-    `  Суточный бюджет: ${b.used} из ${b.limit}, осталось ${b.remaining}` +
+    (b.unlimited
+      ? `  Отправлено за 24 часа: ${b.used} (суточного потолка нет)`
+      : `  Суточный бюджет: ${b.used} из ${b.limit}, осталось ${b.remaining}`) +
       (b.remaining === 0 && b.resetsAt ? `, освободится в ${hhmm(b.resetsAt)}` : ''),
     `  Режим отправки: ${s.dryRun ? 'предпросмотр (SEND_DRY_RUN=true)' : 'боевой'}`,
     `  Планировщик: ${s.scheduler.active ? `включён, окно ${s.scheduler.window}` : 'выключен'}`,
@@ -115,7 +123,11 @@ export function formatSendReport(report: SendReport): string {
   lines.push(report.dryRun ? `Ушло бы: ${wouldSend}` : `Отправлено: ${report.sent}`);
   if (report.failed > 0) lines.push(`Ошибок: ${report.failed}`);
   if (report.skipped > 0) lines.push(`Пропущено: ${report.skipped}`);
-  lines.push(`Суточный бюджет: ${b.used} из ${b.limit}, осталось ${b.remaining}`);
+  lines.push(
+    b.unlimited
+      ? `Отправлено за 24 часа: ${b.used} (суточного потолка нет)`
+      : `Суточный бюджет: ${b.used} из ${b.limit}, осталось ${b.remaining}`,
+  );
 
   // Фатальную остановку нельзя оставлять строкой среди счётчиков: PEER_FLOOD
   // означает, что аккаунт уже ограничен за рассылку незнакомцам, и каждая

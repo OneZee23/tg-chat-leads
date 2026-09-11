@@ -200,13 +200,20 @@ export class SendSchedulerService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      // Когда суточного потолка нет (SEND_MAX_PER_DAY=0, значение по
+      // умолчанию с 11.09.2026), размазывать по остатку бюджета нечего:
+      // remaining — это MAX_SAFE_INTEGER. Тогда единственный темп —
+      // SEND_SCHEDULE_MIN_GAP_SEC, то есть 5 минут по умолчанию,
+      // ~130 сообщений за окно 10:00–21:00 вместо прежних 20.
+      // Планировщику намеренно не сделали yarn-команду (см. CLAUDE.md):
+      // тот, кто включает его курлом, задаёт темп этим зазором.
       this.schedule(
         epoch,
         new Date(
           Date.now() +
             computeSpacingMs({
               remainingMs: msRemainingInWindow(new Date(), start, end),
-              remainingBudget: Math.max(0, budget.remaining - 1),
+              remainingBudget: budget.unlimited ? 0 : Math.max(0, budget.remaining - 1),
               minGapMs: this.config.scheduleMinGapSec * 1000,
             }),
         ),

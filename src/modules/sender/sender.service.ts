@@ -24,7 +24,7 @@ export interface SendReport {
   stoppedBecause: string;
   /** Остановились из-за ограничения аккаунта. Планировщик обязан это учесть. */
   fatal: boolean;
-  dailyBudget: { limit: number; used: number; remaining: number };
+  dailyBudget: { limit: number; used: number; remaining: number; unlimited: boolean };
   entries: Array<{
     username: string;
     result: 'sent' | 'dry-run' | 'failed' | 'skipped';
@@ -132,6 +132,7 @@ export class SenderService {
         limit: budget.limit,
         used: budget.used,
         remaining: budget.remaining,
+        unlimited: budget.unlimited,
       },
       entries: [],
     };
@@ -244,6 +245,7 @@ export class SenderService {
       limit: after.limit,
       used: after.used,
       remaining: after.remaining,
+      unlimited: after.unlimited,
     };
     return report;
   }

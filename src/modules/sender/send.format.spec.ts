@@ -8,7 +8,7 @@ function status(over: Partial<SendStatusView> = {}): SendStatusView {
   return {
     running: false,
     dryRun: false,
-    dailyBudget: { limit: 20, used: 5, remaining: 15, resetsAt: null },
+    dailyBudget: { limit: 20, used: 5, remaining: 15, unlimited: false, resetsAt: null },
     scheduler: { active: false, window: '10:00–21:00', nextSendAt: null },
     floodSummary: '',
     floodActive: 0,
@@ -61,12 +61,48 @@ describe('formatSendStatus', () => {
           limit: 20,
           used: 20,
           remaining: 0,
+          unlimited: false,
           resetsAt: new Date('2026-09-04T15:00:00Z'),
         },
       }),
     );
     expect(out).toMatch(/бюджет.*исчерпан/i);
     expect(out).not.toContain('yarn send');
+  });
+
+  it('без потолка показывает счётчик за сутки, а не «бюджет»', () => {
+    // 11.09.2026 суточный потолок убран: он останавливал отправку сам по
+    // себе, хотя Telegram аккаунт не ограничивал. Строка про бюджет в этом
+    // режиме — вымысел, её быть не должно.
+    const out = formatSendStatus(
+      status({
+        dailyBudget: {
+          limit: 0,
+          used: 37,
+          remaining: Number.MAX_SAFE_INTEGER,
+          unlimited: true,
+          resetsAt: null,
+        },
+      }),
+    );
+    expect(out).toContain('Отправлено за 24 часа: 37');
+    expect(out).not.toMatch(/Суточный бюджет/);
+  });
+
+  it('без потолка совет не упирается в исчерпанный бюджет', () => {
+    const out = formatSendStatus(
+      status({
+        dailyBudget: {
+          limit: 0,
+          used: 500,
+          remaining: Number.MAX_SAFE_INTEGER,
+          unlimited: true,
+          resetsAt: null,
+        },
+      }),
+    );
+    expect(out).not.toMatch(/бюджет.*исчерпан/i);
+    expect(out).toContain('yarn send');
   });
 
   it('говорит, что рассылка сейчас идёт, чтобы не запускать вторую', () => {
@@ -96,7 +132,7 @@ describe('formatSendReport', () => {
     skipped: 0,
     stoppedBecause: 'очередь закончилась',
     fatal: false,
-    dailyBudget: { limit: 20, used: 5, remaining: 15 },
+    dailyBudget: { limit: 20, used: 5, remaining: 15, unlimited: false },
     entries: [
       { username: 'a', result: 'dry-run' as const },
       { username: 'b', result: 'dry-run' as const },
@@ -115,6 +151,21 @@ describe('formatSendReport', () => {
     // Но для человека строка «Ушло бы: 0» под списком из трёх имён — ложь.
     const out = formatSendReport({ ...report, sent: 0 });
     expect(out).toMatch(/Ушло бы: 3/);
+  });
+
+  it('итог рассылки без потолка не выдумывает бюджет', () => {
+    const out = formatSendReport({
+      ...report,
+      dryRun: false,
+      dailyBudget: {
+        limit: 0,
+        used: 37,
+        remaining: Number.MAX_SAFE_INTEGER,
+        unlimited: true,
+      },
+    });
+    expect(out).toContain('Отправлено за 24 часа: 37');
+    expect(out).not.toMatch(/Суточный бюджет/);
   });
 
   it('боевой прогон не предлагает отправить ещё раз', () => {

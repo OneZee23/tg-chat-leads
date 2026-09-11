@@ -5,9 +5,12 @@ import { LeadEntity } from '@modules/lead/lead.entity';
 import { SendAttemptEntity } from '@modules/sender/send-attempt.entity';
 
 export interface DailyBudget {
+  /** 0 = потолка нет. */
   limit: number;
   used: number;
   remaining: number;
+  /** Потолок снят: remaining в этом случае смысла не имеет. */
+  unlimited: boolean;
   /** Когда освободится место, если бюджет исчерпан. */
   resetsAt: Date | null;
 }
@@ -68,16 +71,23 @@ export class SendAttemptService {
     );
 
     const used = Number(rows[0]?.used ?? 0);
-    const remaining = Math.max(0, limit - used);
+    // limit = 0 значит «потолка нет». Возвращаем заведомо недостижимый
+    // остаток, чтобы вызывающий код не пришлось переписывать под особый
+    // случай: он просто никогда не упрётся.
+    const unlimited = limit <= 0;
+    const remaining = unlimited ? Number.MAX_SAFE_INTEGER : Math.max(0, limit - used);
     const oldest = rows[0]?.oldest ? new Date(rows[0].oldest) : null;
 
     return {
       limit,
       used,
       remaining,
+      unlimited,
       // Место освободится, когда самая старая отправка выпадет из окна.
       resetsAt:
-        remaining === 0 && oldest ? new Date(oldest.getTime() + 24 * 3_600_000) : null,
+        !unlimited && remaining === 0 && oldest
+          ? new Date(oldest.getTime() + 24 * 3_600_000)
+          : null,
     };
   }
 
