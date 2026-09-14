@@ -13,6 +13,10 @@ import { autoReplyDecision } from '@modules/outreach/reply-draft';
 import { AutoAction, ReplyKind } from '@modules/outreach/reply-draft';
 import { ScannerConfig } from '@modules/scanner/scanner.config';
 import { buildHook } from '@modules/sender/outreach-message';
+import {
+  TelegramAccount,
+  TelegramAccountsService,
+} from '@modules/telegram/telegram-accounts.service';
 import { TelegramClientService } from '@modules/telegram/telegram-client.service';
 
 export interface AutoReplyEntry {
@@ -84,8 +88,50 @@ export class DialogsService {
     private readonly config: DialogsConfig,
     private readonly scannerConfig: ScannerConfig,
     private readonly telegram: TelegramClientService,
+    private readonly accounts: TelegramAccountsService,
     private readonly leads: LeadService,
   ) {}
+
+  /**
+   * Диалоги ВСЕХ подключённых аккаунтов, по очереди.
+   *
+   * Ответ приходит тому, кто писал. Если второй аккаунт отправил письмо, а
+   * инбокс читается только с первого, ответ этого человека не увидит никто —
+   * фича не экономит время, а теряет живых людей. Поэтому каждый обход идёт
+   * по всем аккаунтам, а вместе с диалогом отдаётся и тот, чья это личка:
+   * читать историю и отвечать надо ИМЕННО им.
+   *
+   * Порядок — из `accounts.list()`: основной первый. На этом держится
+   * разрешение дублей ниже: человека, который есть в личке у обоих,
+   * разбирает первый, а второй пропускает.
+   *
+   * DIALOGS_LIMIT применяется к каждому аккаунту отдельно: это окно обхода
+   * «последние N диалогов», и у каждой лички оно своё.
+   */
+  private async *eachDialog(): AsyncGenerator<{
+    dialog: Awaited<ReturnType<TelegramAccount['client']['getDialogs']>>[number];
+    account: TelegramAccount;
+  }> {
+    for (const account of this.accounts.list()) {
+      for await (const dialog of account.client.iterDialogs({
+        limit: this.config.limit,
+      })) {
+        yield { dialog, account };
+      }
+    }
+  }
+
+  /**
+   * Читать ли переписку этого человека с этого аккаунта.
+   *
+   * Пока аккаунт за человеком не закреплён, разбирает первый, у кого нашёлся
+   * диалог. Как только закреплён — только он: у человека может быть личный
+   * чат и со вторым нашим номером, и тогда «последнее сообщение входящее»
+   * относилось бы к совсем другому разговору.
+   */
+  private ownsDialog(account: TelegramAccount, assigned: string | null): boolean {
+    return !assigned || assigned === account.name;
+  }
 
   /**
    * Все групповые диалоги аккаунта — чтобы не выписывать @имена руками.
@@ -138,8 +184,9 @@ export class DialogsService {
    * будет видно по contactedTotal.
    */
   public async syncContacted(): Promise<ContactedSyncResult> {
-    const client = this.telegram.getClient();
-    const contactedIds: string[] = [];
+    // Кого нашли в личке КАЖДОГО аккаунта: пометка закрепляет за человеком
+    // того, у кого нашлось наше исходящее.
+    const contactedByAccount = new Map<string, string[]>();
     const repliedIds: string[] = [];
     const result: ContactedSyncResult = {
       dialogsSeen: 0,
@@ -162,7 +209,7 @@ export class DialogsService {
     // кто реально ждёт своей очереди.
     const pending = await this.leads.getPendingTgIds();
 
-    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+    for await (const { dialog, account } of this.eachDialog()) {
       result.dialogsSeen += 1;
       if (!dialog.isUser) continue;
 
@@ -179,13 +226,15 @@ export class DialogsService {
 
       if (!iWrote && this.config.deepCheck && pending.has(peerId)) {
         result.deepChecks += 1;
-        iWrote = await this.hasOutgoing(entity);
+        iWrote = await this.hasOutgoing(account, entity);
         await sleep(this.config.deepDelayMs);
       }
 
       if (iWrote) {
         result.contactedTotal += 1;
-        contactedIds.push(peerId);
+        const list = contactedByAccount.get(account.name) ?? [];
+        list.push(peerId);
+        contactedByAccount.set(account.name, list);
       }
 
       // Ответ = последнее сообщение в диалоге входящее, и до него было наше.
@@ -209,7 +258,12 @@ export class DialogsService {
       }
     }
 
-    result.leadsMarked = await this.leads.markContacted(contactedIds);
+    // По аккаунтам и в порядке списка: основной первый. Второй проход по
+    // тому же человеку ничего не сделает — markContacted трогает только
+    // `new`/`sending`, а после первого прохода он уже `contacted`.
+    for (const [account, ids] of contactedByAccount) {
+      result.leadsMarked += await this.leads.markContacted(ids, account);
+    }
     // Строго после contacted: markReplied переводит только из contacted,
     // поэтому человек, которого мы пометили написанным прямо сейчас,
     // за тот же проход доедет до replied. При обратном порядке застрял бы.
@@ -246,26 +300,30 @@ export class DialogsService {
     answered: number;
     deepReads: number;
   }> {
-    const client = this.telegram.getClient();
     const contacted = await this.leads.getContactedForRecount();
     // id → когда мы писали. Идём по диалогам, а НЕ по никам: getEntity('@ник')
     // делает contacts.ResolveUsername на каждого, а Telegram его жёстко
     // лимитирует — на трёх сотнях это FloodWait по 3-4 секунды каждый.
     // iterDialogs отдаёт уже разрезолвленные сущности за один проход.
-    const sentById = new Map(contacted.map((c) => [c.tgUserId, c.contactedAt]));
+    const sentById = new Map(contacted.map((c) => [c.tgUserId, c]));
     const result = { checked: 0, replied: 0, answered: 0, deepReads: 0 };
+    // Человек может быть в личке у обоих аккаунтов — считаем его один раз.
+    const done = new Set<string>();
 
-    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+    for await (const { dialog, account } of this.eachDialog()) {
       if (!dialog.isUser) continue;
       const entity = dialog.entity;
       if (!(entity instanceof Api.User)) continue;
 
       const id = entity.id.toString();
-      if (!sentById.has(id)) continue;
+      const lead = sentById.get(id);
+      if (!lead) continue;
+      if (done.has(id)) continue;
+      if (!this.ownsDialog(account, lead.assignedAccount)) continue;
+      done.add(id);
 
       result.checked += 1;
-      const sent = sentById.get(id);
-      const sentAt = sent ? sent.getTime() : 0;
+      const sentAt = lead.contactedAt ? lead.contactedAt.getTime() : 0;
       const last = dialog.message;
 
       if (
@@ -282,7 +340,7 @@ export class DialogsService {
         // Последнее сообщение наше. Либо это исходное письмо (ответа не было),
         // либо мы уже ответили на их ответ. Читаем историю, чтобы отличить.
         try {
-          const messages = await client.getMessages(entity, {
+          const messages = await account.client.getMessages(entity, {
             limit: this.config.deepLimit,
           });
           result.deepReads += 1;
@@ -335,7 +393,6 @@ export class DialogsService {
     dryRun: boolean;
     limit: number;
   }): Promise<AutoReplyResult> {
-    const client = this.telegram.getClient();
     const candidates = await this.leads.getAutoReplyCandidates();
     const cap = Math.min(options.limit, this.config.autoReplyMax);
     const result: AutoReplyResult = {
@@ -347,7 +404,11 @@ export class DialogsService {
       entries: [],
     };
 
-    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+    // Человек в личке у обоих аккаунтов — разбираем один раз, иначе он
+    // получит два одинаковых шаблона с разных номеров.
+    const done = new Set<string>();
+
+    for await (const { dialog, account } of this.eachDialog()) {
       // Лимит считаем по отправкам: закрытие без ответа и «оставить тебе»
       // сообщений не шлют, ограничивать их незачем.
       if (result.sent >= cap) {
@@ -359,9 +420,14 @@ export class DialogsService {
       if (!(entity instanceof Api.User)) continue;
 
       const id = entity.id.toString();
-      const sentAt = candidates.get(id);
-      if (sentAt === undefined) continue;
-      const cutoff = sentAt ? sentAt.getTime() : 0;
+      const candidate = candidates.get(id);
+      if (!candidate) continue;
+      if (done.has(id)) continue;
+      // Отвечает тот аккаунт, который вёл переписку: ответ с другого номера
+      // человек прочитает как сообщение от постороннего.
+      if (!this.ownsDialog(account, candidate.assignedAccount)) continue;
+      done.add(id);
+      const cutoff = candidate.contactedAt ? candidate.contactedAt.getTime() : 0;
 
       // Дешёвый пред-фильтр по последнему сообщению: похоже ли на
       // неотвеченный ответ. Отсекает почти всех, не тратя запрос истории.
@@ -378,7 +444,9 @@ export class DialogsService {
       // ОДНО наше исходящее: значит мы уже ответили (руками или прошлым авто).
       let messages;
       try {
-        messages = await client.getMessages(entity, { limit: this.config.deepLimit });
+        messages = await account.client.getMessages(entity, {
+          limit: this.config.deepLimit,
+        });
         await sleep(this.config.deepDelayMs);
       } catch (err) {
         // Не смогли прочитать историю — молчим и идём дальше. Отправлять
@@ -442,7 +510,7 @@ export class DialogsService {
       }
 
       try {
-        await client.sendMessage(entity, { message: decision.text ?? '' });
+        await account.client.sendMessage(entity, { message: decision.text ?? '' });
       } catch (err) {
         // Ошибка на отправке (в т.ч. FloodWait — он уже записан трекером
         // через обёртку invoke) останавливает проход: сыпать дальше при
@@ -484,7 +552,6 @@ export class DialogsService {
    * отвечать нечего и историю читать незачем. Это отсекает почти всех.
    */
   public async collectUnanswered(limit: number): Promise<InboxDump> {
-    const client = this.telegram.getClient();
     const candidates = await this.leads.getDialogCandidates();
 
     const dump: InboxDump = {
@@ -505,7 +572,7 @@ export class DialogsService {
     // по последним диалогам аккаунта и старые в окно не попадают.
     const seen = new Set<string>();
 
-    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+    for await (const { dialog, account } of this.eachDialog()) {
       dump.dialogsIterated += 1;
       if (dump.dialogs.length + dump.trivial.length >= limit) {
         dump.stoppedBecause = `упёрлись в лимит выгрузки (${limit})`;
@@ -517,6 +584,8 @@ export class DialogsService {
 
       const candidate = candidates.get(entity.id.toString());
       if (!candidate) continue;
+      if (seen.has(candidate.tgUserId)) continue;
+      if (!this.ownsDialog(account, candidate.assignedAccount)) continue;
       dump.dialogsSeen += 1;
       seen.add(candidate.tgUserId);
 
@@ -527,7 +596,9 @@ export class DialogsService {
 
       let messages;
       try {
-        messages = await client.getMessages(entity, { limit: this.config.deepLimit });
+        messages = await account.client.getMessages(entity, {
+          limit: this.config.deepLimit,
+        });
         await sleep(this.config.deepDelayMs);
       } catch (err) {
         // Историю не прочитали — в выгрузку не кладём: писать ответ вслепую
@@ -553,6 +624,10 @@ export class DialogsService {
       const entry: InboxDialog = {
         tgUserId: candidate.tgUserId,
         username: entity.username ?? null,
+        // Кто ведёт переписку. В файле это видно человеку, а обратный
+        // прогон outbox по этому полю выбирает, с какого аккаунта отвечать.
+        account: account.name,
+        accountTitle: account.title,
         hook: buildHook(candidate.sampleText),
         about: candidate.sampleText,
         heuristic: {
@@ -618,7 +693,6 @@ export class DialogsService {
    * человек.
    */
   public async collectReviews(limit: number): Promise<ReviewsDump> {
-    const client = this.telegram.getClient();
     const candidates = await this.leads.getReviewCandidates();
 
     const dump: ReviewsDump = {
@@ -628,7 +702,10 @@ export class DialogsService {
       stoppedBecause: 'кандидаты закончились',
     };
 
-    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+    // Один человек — один отзыв, даже если он есть в личке у обоих.
+    const done = new Set<string>();
+
+    for await (const { dialog, account } of this.eachDialog()) {
       if (dump.entries.length >= limit) {
         dump.stoppedBecause = `упёрлись в лимит выгрузки (${limit})`;
         break;
@@ -639,11 +716,16 @@ export class DialogsService {
 
       const candidate = candidates.get(entity.id.toString());
       if (!candidate) continue;
+      if (done.has(candidate.tgUserId)) continue;
+      if (!this.ownsDialog(account, candidate.assignedAccount)) continue;
+      done.add(candidate.tgUserId);
       dump.dialogsSeen += 1;
 
       let messages;
       try {
-        messages = await client.getMessages(entity, { limit: this.config.deepLimit });
+        messages = await account.client.getMessages(entity, {
+          limit: this.config.deepLimit,
+        });
         await sleep(this.config.deepDelayMs);
       } catch (err) {
         this.logger.warn(
@@ -696,9 +778,7 @@ export class DialogsService {
     const out = new Map<string, Buffer>();
     if (wanted.size === 0) return out;
 
-    const client = this.telegram.getClient();
-
-    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+    for await (const { dialog, account } of this.eachDialog()) {
       if (out.size >= wanted.size) break;
       if (!dialog.isUser) continue;
       const entity = dialog.entity;
@@ -706,9 +786,12 @@ export class DialogsService {
 
       const id = entity.id.toString();
       if (!wanted.has(id)) continue;
+      // Аватарка у человека одна — если её уже скачали с другого аккаунта,
+      // второй раз не ходим.
+      if (out.has(id)) continue;
 
       try {
-        const buf = await client.downloadProfilePhoto(entity, { isBig: true });
+        const buf = await account.client.downloadProfilePhoto(entity, { isBig: true });
         await sleep(this.config.deepDelayMs);
         if (buf && buf.length > 0) out.set(id, Buffer.from(buf as Buffer));
       } catch (err) {
@@ -759,7 +842,6 @@ export class DialogsService {
     entries: OutboxEntry[],
     options: SendPreparedOptions,
   ): Promise<OutboxSendResult> {
-    const client = this.telegram.getClient();
     const candidates = await this.leads.getDialogCandidates();
     const cap = Math.min(options.limit, this.config.autoReplyMax);
 
@@ -868,7 +950,7 @@ export class DialogsService {
       return result;
     }
 
-    for await (const dialog of client.iterDialogs({ limit: this.config.limit })) {
+    for await (const { dialog, account } of this.eachDialog()) {
       if (pending.size === 0) break;
       if (result.sent >= cap) {
         result.stoppedBecause = `упёрлись в лимит отправок (${cap})`;
@@ -881,6 +963,13 @@ export class DialogsService {
       const id = dialogEntity.id.toString();
       const entry = pending.get(id);
       if (!entry) continue;
+
+      // Отвечает тот аккаунт, который вёл переписку. Пропускаем, НЕ удаляя
+      // из pending: этот же человек встретится дальше в личке своего
+      // аккаунта, и там ответ уйдёт. Удалить здесь — значит потерять его.
+      const assigned = candidates.get(id)?.assignedAccount ?? null;
+      if (!this.ownsDialog(account, assigned)) continue;
+
       pending.delete(id);
 
       // Кому писать — решает база, а не файл: человека могли пометить
@@ -902,7 +991,7 @@ export class DialogsService {
       // SEND: перечитываем историю и решаем, актуален ли ещё черновик.
       let messages;
       try {
-        messages = await client.getMessages(dialogEntity, {
+        messages = await account.client.getMessages(dialogEntity, {
           limit: this.config.deepLimit,
         });
         await sleep(this.config.deepDelayMs);
@@ -965,7 +1054,7 @@ export class DialogsService {
         // умолчанию) вырезает непарный делимитер молча, и человек получает не
         // те байты, которые автор вычитал. Глобально не выключаем: холодное
         // письмо в sender.service шлётся из body.md и на разметку опирается.
-        await client.sendMessage(dialogEntity, {
+        await account.client.sendMessage(dialogEntity, {
           message: entry.body,
           parseMode: false,
         });
@@ -1023,11 +1112,11 @@ export class DialogsService {
    * один раз, а человек потом прислал сотню — не увидим. На практике
    * переписки после холодного аутрича короткие.
    */
-  private async hasOutgoing(user: Api.User): Promise<boolean> {
+  private async hasOutgoing(account: TelegramAccount, user: Api.User): Promise<boolean> {
     try {
-      const messages = await this.telegram
-        .getClient()
-        .getMessages(user, { limit: this.config.deepLimit });
+      const messages = await account.client.getMessages(user, {
+        limit: this.config.deepLimit,
+      });
       return messages.some((message) => message.out === true);
     } catch (err) {
       // Диалог мог быть удалён/ограничен — считаем, что не писали, и идём

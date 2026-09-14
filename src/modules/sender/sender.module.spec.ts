@@ -15,7 +15,12 @@ describe('SenderModule (DI)', () => {
       .overrideProvider(getRepositoryToken(SendAttemptEntity))
       .useValue({})
       .overrideProvider(TelegramClientService)
-      .useValue({ getClient: () => ({}), tryGetClient: () => null, getMyId: () => null })
+      .useValue({
+        getClient: () => ({}),
+        tryGetClient: () => null,
+        getMyId: () => null,
+        getMyTitle: () => null,
+      })
       .compile();
 
     expect(moduleRef.get(SenderService)).toBeInstanceOf(SenderService);

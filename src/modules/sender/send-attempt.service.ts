@@ -13,6 +13,8 @@ export interface DailyBudget {
   unlimited: boolean;
   /** Когда освободится место, если бюджет исчерпан. */
   resetsAt: Date | null;
+  /** Чей это бюджет. Потолок считается на каждый аккаунт отдельно. */
+  account: string;
 }
 
 @Injectable()
@@ -23,14 +25,14 @@ export class SendAttemptService {
   ) {}
 
   /** Пишется ДО вызова Telegram. Возвращает id, чтобы потом закрыть исход. */
-  public async start(lead: LeadEntity): Promise<string> {
+  public async start(lead: LeadEntity, account: string): Promise<string> {
     const rows: Array<{ id: string }> = await this.repo.query(
       `
-      INSERT INTO tg_send_attempt (lead_id, tg_user_id, username, started_at, result)
-      VALUES ($1, $2, $3, now(), 'started')
+      INSERT INTO tg_send_attempt (lead_id, tg_user_id, username, started_at, result, account)
+      VALUES ($1, $2, $3, now(), 'started', $4)
       RETURNING id
       `,
-      [lead.id, lead.tgUserId, lead.username],
+      [lead.id, lead.tgUserId, lead.username, account],
     );
     return rows[0].id;
   }
@@ -60,14 +62,19 @@ export class SendAttemptService {
    * Окно скользящее, а не «с полуночи»: Telegram смотрит на активность
    * за последние часы, а не на календарные сутки.
    */
-  public async budget(limit: number): Promise<DailyBudget> {
+  public async budget(limit: number, account?: string): Promise<DailyBudget> {
+    // Потолок считается НА АККАУНТ, а не на всех сразу: банят конкретный
+    // аккаунт, и защищать надо каждый по отдельности. Без account —
+    // суммарная картина по всем, она нужна только для отчёта.
     const rows: Array<{ used: string; oldest: Date | null }> = await this.repo.query(
       `
       SELECT count(*)::text AS used, min(started_at) AS oldest
       FROM tg_send_attempt
       WHERE result IN ('sent', 'started')
         AND started_at > now() - interval '24 hours'
+        AND ($1::text IS NULL OR account = $1::text)
       `,
+      [account ?? null],
     );
 
     const used = Number(rows[0]?.used ?? 0);
@@ -88,6 +95,7 @@ export class SendAttemptService {
         !unlimited && remaining === 0 && oldest
           ? new Date(oldest.getTime() + 24 * 3_600_000)
           : null,
+      account: account ?? 'all',
     };
   }
 

@@ -91,7 +91,7 @@ describe('formatRefreshSummary', () => {
     newLeads: 7,
     contactedMarked: 3,
     repliedMarked: 1,
-    outreach: { contacted: 157, replied: 4 },
+    outreach: { contacted: 157, replied: 4, bySource: [] },
     chats: [
       { chat: '@one', messagesSeen: 100 },
       { chat: '@two', messagesSeen: 20, error: 'FloodWait 300s' },
@@ -117,10 +117,62 @@ describe('formatRefreshSummary', () => {
   it('не делит на ноль, когда никому ещё не писали', () => {
     const out = formatRefreshSummary({
       ...base,
-      outreach: { contacted: 0, replied: 0 },
+      outreach: { contacted: 0, replied: 0, bySource: [] },
     });
 
     expect(out).toContain('ОТВЕТИЛИ: 0 из 0');
+    expect(out).not.toContain('NaN');
+  });
+
+  it('печатает разрез по источникам сбора', () => {
+    // Ради этой таблицы источник и заводили: понять, где искать дальше.
+    const out = formatRefreshSummary({
+      ...base,
+      outreach: {
+        contacted: 157,
+        replied: 4,
+        bySource: [
+          { source: 'tg_chat', leads: 1200, contacted: 150, replied: 3 },
+          { source: 'google', leads: 40, contacted: 7, replied: 1 },
+        ],
+      },
+    });
+
+    expect(out).toContain('Откуда лиды:');
+    expect(out).toContain('tg_chat');
+    expect(out).toContain('google');
+    expect(out).toContain('2.0%'); // 3 из 150
+    expect(out).toContain('14.3%'); // 1 из 7
+  });
+
+  it('не рисует таблицу источников, пока источник один', () => {
+    // Повторять ту же строку другими словами незачем.
+    const out = formatRefreshSummary({
+      ...base,
+      outreach: {
+        contacted: 157,
+        replied: 4,
+        bySource: [{ source: 'tg_chat', leads: 1200, contacted: 157, replied: 4 }],
+      },
+    });
+
+    expect(out).not.toContain('Откуда лиды:');
+  });
+
+  it('не делит на ноль в источнике, которому ещё не писали', () => {
+    const out = formatRefreshSummary({
+      ...base,
+      outreach: {
+        contacted: 150,
+        replied: 3,
+        bySource: [
+          { source: 'tg_chat', leads: 1200, contacted: 150, replied: 3 },
+          { source: 'instagram', leads: 12, contacted: 0, replied: 0 },
+        ],
+      },
+    });
+
+    expect(out).toContain('instagram');
     expect(out).not.toContain('NaN');
   });
 });

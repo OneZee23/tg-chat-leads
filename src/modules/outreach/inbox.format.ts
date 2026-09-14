@@ -26,6 +26,10 @@ export interface InboxDialog {
   about: string | null;
   /** Вердикт эвристики: второе мнение, не приговор. */
   heuristic: { kind: string; action: string; reason: string };
+  /** Имя телеграм-аккаунта, в чьей личке лежит переписка (`main`/`second`). */
+  account?: string;
+  /** Его @ник — чтобы человек понимал, о каком номере речь. */
+  accountTitle?: string;
   history: InboxMessage[];
 }
 
@@ -90,7 +94,14 @@ export function formatInbox(dump: InboxDump): string {
     return lines.join('\n') + renderUnseen(dump);
   }
 
-  dump.dialogs.forEach((d) => lines.push(...renderDialog(d)));
+  // Аккаунт подписываем, только если он не один: приписка «@мой_основной»
+  // в каждом блоке, пока номер единственный, — чистый шум.
+  const accounts = new Set(
+    [...dump.dialogs, ...dump.trivial].map((d) => d.account).filter(Boolean),
+  );
+  const showAccount = accounts.size > 1 || (accounts.size === 1 && !accounts.has('main'));
+
+  dump.dialogs.forEach((d) => lines.push(...renderDialog(d, showAccount)));
 
   if (dump.trivial.length > 0) {
     lines.push(
@@ -102,7 +113,7 @@ export function formatInbox(dump: InboxDump): string {
       'и оставь `CLOSE`, если согласен.',
       '',
     );
-    dump.trivial.forEach((d) => lines.push(...renderDialog(d)));
+    dump.trivial.forEach((d) => lines.push(...renderDialog(d, showAccount)));
   }
 
   // Список ненайденных — в самом конце, после тривиального: это не работа
@@ -110,10 +121,13 @@ export function formatInbox(dump: InboxDump): string {
   return lines.join('\n') + renderUnseen(dump);
 }
 
-function renderDialog(d: InboxDialog): string[] {
+function renderDialog(d: InboxDialog, showAccount = false): string[] {
   const lines: string[] = [
     `## id${d.tgUserId}${d.username ? ` @${d.username}` : ''}`,
     '',
+    ...(showAccount
+      ? [`- переписка с аккаунта: ${d.accountTitle ?? d.account ?? '—'}`]
+      : []),
     `- наш хук: ${d.hook}`,
     `- о себе в чате: ${d.about ? oneLine(d.about) : '—'}`,
     `- эвристика: ${d.heuristic.kind} / ${d.heuristic.action} — ${d.heuristic.reason}`,

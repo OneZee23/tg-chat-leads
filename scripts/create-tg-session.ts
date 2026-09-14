@@ -2,7 +2,13 @@
  * Разовый вход в Telegram-аккаунт. Печатает строку сессии, которую надо
  * положить в TG_SESSION в .env.
  *
- *   yarn session:create
+ *   yarn session:create           — основной аккаунт (TG_SESSION)
+ *   yarn session:create second    — второй аккаунт   (TG_SESSION_2)
+ *
+ * Для второго номер СПРАШИВАЕТСЯ всегда, даже если TG_PHONE заполнен:
+ * в .env лежит телефон основного, и молчаливый вход по нему выдал бы
+ * вторую сессию того же аккаунта — то есть два клиента на одну сессию,
+ * ровно тот случай, который 07.09.2026 стоил аккаунта.
  *
  * Запускать в обычном терминале: скрипт спрашивает код из Telegram, а при
  * включённой двухфакторке — облачный пароль.
@@ -19,6 +25,10 @@ import { StringSession } from 'telegram/sessions';
 const API_ID = Number(process.env.TG_API_ID);
 const API_HASH = process.env.TG_API_HASH ?? '';
 const PHONE = process.env.TG_PHONE ?? '';
+
+/** Какой слот заполняем: основной или второй аккаунт. */
+const SECOND = process.argv.slice(2).includes('second');
+const SLOT = SECOND ? 'TG_SESSION_2' : 'TG_SESSION';
 
 async function ask(query: string, hidden = false): Promise<string> {
   const rl = readline.createInterface({
@@ -50,7 +60,11 @@ async function main(): Promise<void> {
     throw new Error('Заполни TG_API_ID и TG_API_HASH в .env (my.telegram.org)');
   }
 
-  const phone = PHONE || (await ask('Телефон в формате +79991234567: '));
+  if (SECOND) {
+    console.log('Вход во ВТОРОЙ аккаунт. Нужен другой номер, не тот, что в TG_SESSION.\n');
+  }
+
+  const phone = (SECOND ? '' : PHONE) || (await ask('Телефон в формате +79991234567: '));
   if (!phone.startsWith('+')) {
     throw new Error('Телефон нужен в международном формате, с плюсом');
   }
@@ -74,9 +88,16 @@ async function main(): Promise<void> {
   const who = me.username ? `@${me.username}` : `id${me.id.toString()}`;
 
   console.log(`\nВошли как ${who}`);
-  console.log('\nПоложи это в .env как TG_SESSION (одной строкой):\n');
+  console.log(`\nПоложи это в .env как ${SLOT} (одной строкой):\n`);
   console.log(client.session.save());
   console.log('\nИ никому её не показывай.\n');
+
+  if (SECOND) {
+    console.log(
+      'Проверь, что это НЕ тот же аккаунт, что в TG_SESSION: приложение\n' +
+        'откажется стартовать, если оба ключа ведут в одну личку.\n',
+    );
+  }
 
   await client.destroy();
 }

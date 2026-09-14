@@ -9,6 +9,7 @@ import { SendSchedulerService } from '@modules/sender/send-scheduler.service';
 import { SenderConfig } from '@modules/sender/sender.config';
 import { SenderService } from '@modules/sender/sender.service';
 import { FloodWaitTracker } from '@modules/telegram/flood-wait.tracker';
+import { TelegramAccountsService } from '@modules/telegram/telegram-accounts.service';
 
 class RunSendDto {
   @IsOptional()
@@ -54,6 +55,7 @@ export class SenderController {
     private readonly leads: LeadService,
     private readonly config: SenderConfig,
     private readonly flood: FloodWaitTracker,
+    private readonly accounts: TelegramAccountsService,
   ) {}
 
   /**
@@ -87,6 +89,7 @@ export class SenderController {
     const scheduler = this.scheduler.status();
 
     return formatSendStatus({
+      accounts: await this.accountBudgets(),
       running: this.sender.isRunning(),
       dryRun: this.config.dryRun,
       dailyBudget: budget,
@@ -104,6 +107,26 @@ export class SenderController {
     });
   }
 
+  /**
+   * Суточный счётчик по каждому подключённому аккаунту.
+   * Потолок SEND_MAX_PER_DAY действует на каждый отдельно — банят аккаунт,
+   * а не инструмент.
+   */
+  private async accountBudgets() {
+    const rows = [];
+    for (const account of this.accounts.list()) {
+      const budget = await this.attempts.budget(this.config.maxPerDay, account.name);
+      rows.push({
+        name: account.name,
+        title: account.title,
+        used: budget.used,
+        remaining: budget.remaining,
+        unlimited: budget.unlimited,
+      });
+    }
+    return rows;
+  }
+
   /** Машиночитаемое состояние — осталось для отладки: `/send/status.json`. */
   @Get('status.json')
   public async statusJson(@Query() query: RecentQueryDto) {
@@ -114,6 +137,7 @@ export class SenderController {
       running: this.sender.isRunning(),
       dryRun: this.config.dryRun,
       dailyBudget: budget,
+      accounts: await this.accountBudgets(),
       scheduler: this.scheduler.status(),
       // Активные ограничения Telegram: до какого времени и что именно зажато.
       floodLimits: this.flood.active(),

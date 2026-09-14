@@ -21,6 +21,11 @@ export interface SendStatusView {
     unlimited: boolean;
     resetsAt: Date | null;
   };
+  /**
+   * Разрез по телеграм-аккаунтам. Пока аккаунт один, строку не печатаем:
+   * она повторяла бы общий счётчик слово в слово.
+   */
+  accounts: Array<{ name: string; title: string; used: number; remaining: number }>;
   scheduler: { active: boolean; window: string; nextSendAt: string | null };
   floodSummary: string;
   floodActive: number;
@@ -56,6 +61,7 @@ export function formatSendStatus(s: SendStatusView): string {
       ? `  Отправлено за 24 часа: ${b.used} (суточного потолка нет)`
       : `  Суточный бюджет: ${b.used} из ${b.limit}, осталось ${b.remaining}`) +
       (b.remaining === 0 && b.resetsAt ? `, освободится в ${hhmm(b.resetsAt)}` : ''),
+    ...accountLines(s),
     `  Режим отправки: ${s.dryRun ? 'предпросмотр (SEND_DRY_RUN=true)' : 'боевой'}`,
     `  Планировщик: ${s.scheduler.active ? `включён, окно ${s.scheduler.window}` : 'выключен'}`,
   ];
@@ -103,15 +109,46 @@ function nextStep(s: SendStatusView): string {
   return 'Дальше: очередь пуста, добрать новых — yarn refresh';
 }
 
+/**
+ * Сколько ушло с каждого аккаунта за сутки. Нужно, чтобы видеть перекос:
+ * если один пишет вдвое больше другого, он же первым и словит ограничение.
+ */
+function accountLines(s: SendStatusView): string[] {
+  const accounts = s.accounts ?? [];
+  if (accounts.length < 2) return [];
+
+  return [
+    '  По аккаунтам за 24 часа:',
+    ...accounts.map(
+      (a) =>
+        `    ${a.title}: ${a.used}` +
+        (s.dailyBudget.unlimited ? '' : `, осталось ${a.remaining}`),
+    ),
+  ];
+}
+
 export function formatSendReport(report: SendReport): string {
   const head = report.dryRun
     ? 'ПРЕДПРОСМОТР (ничего не отправлено)'
     : 'Рассылка выполнена';
   const lines: string[] = ['', head, ''];
 
+  // Имя аккаунта показываем, только когда их больше одного: иначе в каждой
+  // строке висела бы одна и та же приписка.
+  const accounts = report.accounts ?? [];
+  const titles = new Map(accounts.map((a) => [a.name, a.title]));
+  const showAccount = accounts.length > 1;
+
   report.entries.forEach((e, i) => {
-    const what = e.result === 'failed' ? `ОШИБКА: ${e.error ?? ''}` : LABEL[e.result];
-    lines.push(`${String(i + 1).padStart(3, ' ')}. @${e.username}  ·  ${what}`);
+    const what =
+      e.result === 'failed'
+        ? `ОШИБКА: ${e.error ?? ''}`
+        : e.result === 'skipped' && e.error
+          ? `пропущено: ${e.error}`
+          : LABEL[e.result];
+    const whose =
+      showAccount && e.account ? `  ·  ${titles.get(e.account) ?? e.account}` : '';
+    lines.push(`${String(i + 1).padStart(3, ' ')}. @${e.username}  ·  ${what}${whose}`);
   });
 
   const b = report.dailyBudget;
@@ -128,6 +165,15 @@ export function formatSendReport(report: SendReport): string {
       ? `Отправлено за 24 часа: ${b.used} (суточного потолка нет)`
       : `Суточный бюджет: ${b.used} из ${b.limit}, осталось ${b.remaining}`,
   );
+
+  if (showAccount) {
+    for (const a of accounts) {
+      lines.push(
+        `  ${a.title}: ${a.sentNow} сейчас, ${a.used} за 24 часа` +
+          (a.unlimited ? '' : `, осталось ${a.remaining}`),
+      );
+    }
+  }
 
   // Фатальную остановку нельзя оставлять строкой среди счётчиков: PEER_FLOOD
   // означает, что аккаунт уже ограничен за рассылку незнакомцам, и каждая

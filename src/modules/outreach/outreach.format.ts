@@ -59,7 +59,16 @@ export function formatRefreshSummary(summary: {
   newLeads: number;
   contactedMarked: number;
   repliedMarked: number;
-  outreach: { contacted: number; replied: number };
+  outreach: {
+    contacted: number;
+    replied: number;
+    bySource: Array<{
+      source: string;
+      leads: number;
+      contacted: number;
+      replied: number;
+    }>;
+  };
   chats: Array<{ chat: string; messagesSeen: number; error?: string }>;
 }): string {
   const lines: string[] = ['', 'Обновление закончено.', ''];
@@ -81,6 +90,23 @@ export function formatRefreshSummary(summary: {
     `  ОТВЕТИЛИ: ${summary.outreach.replied} из ${summary.outreach.contacted} ` +
       `(${formatRate(summary.outreach.replied, summary.outreach.contacted)})`,
   );
+
+  // Разрез по каналам сбора — ради него источник и заводили. Рисуем только
+  // когда источников больше одного: пока в базе одни чаты, это та же строка
+  // выше, повторённая другими словами.
+  const bySource = summary.outreach.bySource ?? [];
+  if (bySource.length > 1) {
+    lines.push('');
+    lines.push('  Откуда лиды:');
+    bySource.forEach((row) => {
+      lines.push(
+        `    ${row.source.padEnd(10)} ${String(row.leads).padStart(5)} чел.` +
+          `  ·  написали ${String(row.contacted).padStart(4)}` +
+          `  ·  ответили ${String(row.replied).padStart(3)}` +
+          `  (${formatRate(row.replied, row.contacted)})`,
+      );
+    });
+  }
 
   return lines.join('\n');
 }

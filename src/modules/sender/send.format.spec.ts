@@ -9,6 +9,7 @@ function status(over: Partial<SendStatusView> = {}): SendStatusView {
     running: false,
     dryRun: false,
     dailyBudget: { limit: 20, used: 5, remaining: 15, unlimited: false, resetsAt: null },
+    accounts: [{ name: 'main', title: '@me', used: 5, remaining: 15 }],
     scheduler: { active: false, window: '10:00–21:00', nextSendAt: null },
     floodSummary: '',
     floodActive: 0,
@@ -123,6 +124,24 @@ describe('formatSendStatus', () => {
   });
 });
 
+describe('formatSendStatus: несколько аккаунтов', () => {
+  it('разрез по аккаунтам появляется только со второго', () => {
+    const one = formatSendStatus(status());
+    expect(one).not.toContain('По аккаунтам');
+
+    const two = formatSendStatus(
+      status({
+        accounts: [
+          { name: 'main', title: '@one', used: 12, remaining: 8 },
+          { name: 'second', title: '@two', used: 3, remaining: 17 },
+        ],
+      }),
+    );
+    expect(two).toContain('По аккаунтам за 24 часа');
+    expect(two).toMatch(/@two: 3, осталось 17/);
+  });
+});
+
 describe('formatSendReport', () => {
   const report = {
     dryRun: true,
@@ -133,6 +152,9 @@ describe('formatSendReport', () => {
     stoppedBecause: 'очередь закончилась',
     fatal: false,
     dailyBudget: { limit: 20, used: 5, remaining: 15, unlimited: false },
+    accounts: [
+      { name: 'main', title: '@me', sentNow: 3, used: 5, remaining: 15, unlimited: false },
+    ],
     entries: [
       { username: 'a', result: 'dry-run' as const },
       { username: 'b', result: 'dry-run' as const },
@@ -171,6 +193,46 @@ describe('formatSendReport', () => {
   it('боевой прогон не предлагает отправить ещё раз', () => {
     const out = formatSendReport({ ...report, dryRun: false, entries: [] });
     expect(out).not.toContain('yarn send:go');
+  });
+
+  it('с двумя аккаунтами показывает, кто кому написал', () => {
+    // Ответ придёт тому, кто писал. Без этой пометки непонятно, в чьей
+    // личке искать диалог.
+    const out = formatSendReport({
+      ...report,
+      dryRun: false,
+      accounts: [
+        { name: 'main', title: '@one', sentNow: 2, used: 12, remaining: 8, unlimited: false },
+        { name: 'second', title: '@two', sentNow: 1, used: 3, remaining: 17, unlimited: false },
+      ],
+      entries: [
+        { username: 'a', result: 'sent' as const, account: 'main' },
+        { username: 'b', result: 'sent' as const, account: 'second' },
+      ],
+    });
+    expect(out).toMatch(/@a.*@one/);
+    expect(out).toMatch(/@b.*@two/);
+    expect(out).toMatch(/@two: 1 сейчас, 3 за 24 часа/);
+  });
+
+  it('с одним аккаунтом не приписывает его имя к каждой строке', () => {
+    const out = formatSendReport({ ...report, dryRun: false });
+    expect(out).not.toContain('@me');
+  });
+
+  it('пропуск объясняет причину, а не молчит', () => {
+    const out = formatSendReport({
+      ...report,
+      dryRun: false,
+      entries: [
+        {
+          username: 'a',
+          result: 'skipped' as const,
+          error: 'аккаунт, который вёл переписку, сейчас не подключён',
+        },
+      ],
+    });
+    expect(out).toContain('не подключён');
   });
 
   it('фатальная остановка выделяется, а не теряется в счётчиках', () => {

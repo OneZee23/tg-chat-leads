@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LeadEntity, LeadStatus } from '@modules/lead/lead.entity';
+import { LeadEntity, LeadSource, LeadStatus } from '@modules/lead/lead.entity';
 import { leadQueueScoreSql } from '@modules/lead/queue-order';
 import { ListLeadsQueryDto } from '@modules/lead/dto/list-leads.query.dto';
 import { In, Repository } from 'typeorm';
@@ -13,14 +13,44 @@ export interface UpsertLeadInput {
   phone: string | null;
   isPremium: boolean;
   langCode: string | null;
-  sourceChat: string;
+  /** Канал сбора. Не задан — `tg_chat`, то есть сканер чатов. */
+  source?: LeadSource;
+  /** null у лидов не из чата: у контакта с сайта чата нет вовсе. */
+  sourceChat: string | null;
   sourceChatTitle: string | null;
-  messageId: string;
+  /**
+   * null — лида завели без сообщения (ручной импорт). Это же значение
+   * служит признаком «сообщения не было» в слиянии: счётчики и `last_seen_at`
+   * описывают активность человека В ЧАТЕ, и импорт не имеет права их трогать.
+   */
+  messageId: string | null;
   messageDate: Date;
   isAd: boolean;
   score: number;
   keywords: string[];
   sampleText: string | null;
+  note?: string | null;
+}
+
+/** Строка разреза «сколько собрали / скольким написали / сколько ответили». */
+export interface SourceSummary {
+  source: LeadSource;
+  leads: number;
+  contacted: number;
+  replied: number;
+}
+
+export interface OutreachSummary {
+  contacted: number;
+  replied: number;
+  /** Тот же расчёт, разложенный по каналам сбора. Сумма = поля выше. */
+  bySource: SourceSummary[];
+}
+
+/** Кандидат на шаблонный автоответ: когда писали и с какого аккаунта. */
+export interface AutoReplyCandidate {
+  contactedAt: Date | null;
+  assignedAccount: string | null;
 }
 
 export interface DialogCandidate {
@@ -31,6 +61,12 @@ export interface DialogCandidate {
   sampleText: string | null;
   /** Когда закрыли без ответа; двигает курсор неотвеченного вперёд. */
   closedAt: Date | null;
+  /**
+   * Телеграм-аккаунт, который ведёт переписку. null — писали до появления
+   * второго аккаунта либо не писали вовсе. Нужен обходу диалогов: ответ
+   * лежит в личке того, кто писал, и читать надо именно её.
+   */
+  assignedAccount: string | null;
 }
 
 @Injectable()
@@ -52,7 +88,17 @@ export class LeadService {
    *  • источник и первое сообщение — не трогаем, первая встреча главнее;
    *  • образец текста и ключевые слова — берём от самого «рекламного»
    *    сообщения, иначе свежее «спасибо!» затрёт полезное объявление;
-   *  • score — максимум за всё время.
+   *  • score — максимум за всё время;
+   *  • заметка — не затираем: ручная важнее автоматической;
+   *  • источник — как и `source_chat`, принадлежит первой встрече. Человек,
+   *    найденный сканером и потом попавший в импорт «из гугла», остаётся
+   *    `tg_chat`: иначе разрез по источникам начнёт приписывать чужие ответы
+   *    тому каналу, который просто пришёл вторым.
+   *
+   * Через эту же ручку заводит лидов ручной импорт — второго INSERT по
+   * `tg_lead` в проекте нет намеренно: дедуп живёт в одном уникальном индексе
+   * и в одном ON CONFLICT, иначе два пути расходятся в правилах слияния.
+   * Импорт отличает только `messageId = null` (сообщения не было).
    *
    * `xmax = 0` — штатный способ отличить вставку от обновления в
    * INSERT … ON CONFLICT: у только что вставленной версии строки xmax нулевой.
@@ -62,11 +108,15 @@ export class LeadService {
       `
       INSERT INTO tg_lead (
         tg_user_id, username, first_name, last_name, phone, is_premium, lang_code,
-        source_chat, source_chat_title, first_message_id,
+        source, source_chat, source_chat_title, first_message_id,
         first_seen_at, last_seen_at,
-        messages_count, ad_messages_count, sample_text, matched_keywords, score
+        messages_count, ad_messages_count, sample_text, matched_keywords, score, note
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, 1, $12, $13, $14, $15)
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $16, $8, $9, $10, $11, $11,
+        CASE WHEN $10::bigint IS NULL THEN 0 ELSE 1 END,
+        $12, $13, $14, $15, $17
+      )
       ON CONFLICT (tg_user_id) DO UPDATE SET
         username          = COALESCE(EXCLUDED.username, tg_lead.username),
         first_name        = COALESCE(EXCLUDED.first_name, tg_lead.first_name),
@@ -75,14 +125,21 @@ export class LeadService {
         is_premium        = EXCLUDED.is_premium,
         lang_code         = COALESCE(EXCLUDED.lang_code, tg_lead.lang_code),
         first_seen_at     = LEAST(tg_lead.first_seen_at, EXCLUDED.first_seen_at),
-        last_seen_at      = GREATEST(tg_lead.last_seen_at, EXCLUDED.last_seen_at),
-        messages_count    = tg_lead.messages_count + 1,
+        -- «Когда человек последний раз писал в чате» и счётчики сообщений
+        -- двигает только встреча с сообщением. Повторный импорт того же
+        -- списка иначе омолаживал бы лида, которого в чате не видели год,
+        -- и он всплывал бы наверх очереди рассылки.
+        last_seen_at      = CASE WHEN EXCLUDED.first_message_id IS NOT NULL
+                                 THEN GREATEST(tg_lead.last_seen_at, EXCLUDED.last_seen_at)
+                                 ELSE tg_lead.last_seen_at END,
+        messages_count    = tg_lead.messages_count + EXCLUDED.messages_count,
         ad_messages_count = tg_lead.ad_messages_count + EXCLUDED.ad_messages_count,
         sample_text       = CASE WHEN EXCLUDED.score > tg_lead.score
                                  THEN EXCLUDED.sample_text ELSE tg_lead.sample_text END,
         matched_keywords  = CASE WHEN EXCLUDED.score > tg_lead.score
                                  THEN EXCLUDED.matched_keywords ELSE tg_lead.matched_keywords END,
         score             = GREATEST(tg_lead.score, EXCLUDED.score),
+        note              = COALESCE(tg_lead.note, EXCLUDED.note),
         updated_at        = now()
       RETURNING (xmax = 0) AS created
       `,
@@ -102,10 +159,32 @@ export class LeadService {
         input.sampleText,
         input.keywords,
         input.score,
+        input.source ?? 'tg_chat',
+        input.note ?? null,
       ],
     );
 
     return { created: rows[0]?.created === true };
+  }
+
+  /**
+   * Какие из этих ников уже есть в базе (сравнение в нижнем регистре).
+   *
+   * Нужно ручному импорту ДО похода в Telegram. Дедуп от этого не зависит —
+   * он в уникальном индексе по `tg_user_id`, — но повторный импорт того же
+   * списка иначе сжигает по одному contacts.ResolveUsername на каждую уже
+   * известную строку, а лимит на резолв потом блокирует рассылку.
+   */
+  public async existingUsernames(usernames: string[]): Promise<Set<string>> {
+    if (usernames.length === 0) return new Set();
+
+    const rows: Array<{ username: string }> = await this.repo.query(
+      `SELECT lower(username) AS username FROM tg_lead
+        WHERE lower(username) = ANY($1::text[])`,
+      [usernames.map((name) => name.toLowerCase())],
+    );
+
+    return new Set(rows.map((row) => row.username));
   }
 
   public async list(
@@ -189,20 +268,27 @@ export class LeadService {
    * (PostgresQueryRunner, ветка по `raw.command`). Поэтому `.length` здесь
    * всегда 2, сколько бы строк ни обновилось, и считать надо второй элемент.
    */
-  public async markContacted(tgUserIds: string[]): Promise<number> {
+  /**
+   * `account` — в чьей личке нашлось наше исходящее. Закрепляется за
+   * человеком, если ещё не закреплён: без этого переписка, начатая со
+   * второго аккаунта руками, дальше велась бы с первого — для получателя
+   * это новый незнакомец.
+   */
+  public async markContacted(tgUserIds: string[], account?: string): Promise<number> {
     if (tgUserIds.length === 0) return 0;
 
     const [, affected]: [unknown[], number] = await this.repo.query(
       `
       UPDATE tg_lead
-      SET status       = 'contacted',
-          contacted_at = COALESCE(contacted_at, now()),
-          note         = COALESCE(note, 'автоопределено: в личке уже есть моё сообщение'),
-          updated_at   = now()
+      SET status           = 'contacted',
+          contacted_at     = COALESCE(contacted_at, now()),
+          assigned_account = COALESCE(assigned_account, $2::text),
+          note             = COALESCE(note, 'автоопределено: в личке уже есть моё сообщение'),
+          updated_at       = now()
       WHERE tg_user_id = ANY($1::bigint[])
         AND status IN ('new', 'sending')
       `,
-      [tgUserIds],
+      [tgUserIds, account ?? null],
     );
 
     return affected ?? 0;
@@ -325,22 +411,29 @@ export class LeadService {
     });
   }
 
+  /**
+   * `account` — телеграм-аккаунт, с которого ушло сообщение. Закрепляется
+   * за человеком навсегда (COALESCE, а не присваивание): переписку ведёт
+   * тот, кто её начал, иначе фоллоу-ап придёт от другого незнакомца.
+   */
   public async finishSending(
     id: string,
     outcome: 'contacted' | 'failed',
     note: string,
+    account?: string,
   ): Promise<void> {
     await this.repo.query(
       `
       UPDATE tg_lead
-      SET status       = $2::text,
-          contacted_at = CASE WHEN $2::text = 'contacted'
-                              THEN COALESCE(contacted_at, now()) ELSE contacted_at END,
-          note         = $3,
-          updated_at   = now()
+      SET status           = $2::text,
+          contacted_at     = CASE WHEN $2::text = 'contacted'
+                                  THEN COALESCE(contacted_at, now()) ELSE contacted_at END,
+          assigned_account = COALESCE(assigned_account, $4::text),
+          note             = $3,
+          updated_at       = now()
       WHERE id = $1
       `,
-      [id, outcome, note],
+      [id, outcome, note, account ?? null],
     );
   }
 
@@ -485,19 +578,27 @@ export class LeadService {
 
   /** Все, кому писали: id → момент отправки. Для полного пересчёта ответов. */
   public async getContactedForRecount(): Promise<
-    Array<{ tgUserId: string; username: string | null; contactedAt: Date | null }>
+    Array<{
+      tgUserId: string;
+      username: string | null;
+      contactedAt: Date | null;
+      assignedAccount: string | null;
+    }>
   > {
     const rows: Array<{
       tg_user_id: string;
       username: string | null;
       contacted_at: Date | null;
+      assigned_account: string | null;
     }> = await this.repo.query(
-      `SELECT tg_user_id, username, contacted_at FROM tg_lead WHERE contacted_at IS NOT NULL`,
+      `SELECT tg_user_id, username, contacted_at, assigned_account
+       FROM tg_lead WHERE contacted_at IS NOT NULL`,
     );
     return rows.map((r) => ({
       tgUserId: String(r.tg_user_id),
       username: r.username,
       contactedAt: r.contacted_at,
+      assignedAccount: r.assigned_account ?? null,
     }));
   }
 
@@ -541,14 +642,25 @@ export class LeadService {
    * прогонялся ли перед этим recount. Уже отвеченных (`answered`) и
    * руками закрытых (skip/registered/rejected) не трогаем.
    */
-  public async getAutoReplyCandidates(): Promise<Map<string, Date | null>> {
-    const rows: Array<{ tg_user_id: string; contacted_at: Date | null }> =
-      await this.repo.query(
-        `SELECT tg_user_id, contacted_at FROM tg_lead
-         WHERE contacted_at IS NOT NULL
-           AND status IN ('contacted', 'replied')`,
-      );
-    return new Map(rows.map((r) => [String(r.tg_user_id), r.contacted_at]));
+  public async getAutoReplyCandidates(): Promise<Map<string, AutoReplyCandidate>> {
+    const rows: Array<{
+      tg_user_id: string;
+      contacted_at: Date | null;
+      assigned_account: string | null;
+    }> = await this.repo.query(
+      `SELECT tg_user_id, contacted_at, assigned_account FROM tg_lead
+       WHERE contacted_at IS NOT NULL
+         AND status IN ('contacted', 'replied')`,
+    );
+    return new Map(
+      rows.map((r) => [
+        String(r.tg_user_id),
+        {
+          contactedAt: r.contacted_at,
+          assignedAccount: r.assigned_account ?? null,
+        },
+      ]),
+    );
   }
 
   /**
@@ -577,8 +689,10 @@ export class LeadService {
       contacted_at: Date | null;
       sample_text: string | null;
       closed_at: Date | null;
+      assigned_account: string | null;
     }> = await this.repo.query(
-      `SELECT tg_user_id, username, contacted_at, sample_text, closed_at FROM tg_lead
+      `SELECT tg_user_id, username, contacted_at, sample_text, closed_at, assigned_account
+       FROM tg_lead
        WHERE contacted_at IS NOT NULL
          AND status NOT IN ('skip', 'rejected')
          AND (replied_at IS NOT NULL OR status IN ('replied', 'answered'))`,
@@ -593,6 +707,7 @@ export class LeadService {
           contactedAt: r.contacted_at,
           sampleText: r.sample_text,
           closedAt: r.closed_at,
+          assignedAccount: r.assigned_account ?? null,
         },
       ]),
     );
@@ -605,8 +720,10 @@ export class LeadService {
       contacted_at: Date | null;
       sample_text: string | null;
       closed_at: Date | null;
+      assigned_account: string | null;
     }> = await this.repo.query(
-      `SELECT tg_user_id, username, contacted_at, sample_text, closed_at FROM tg_lead
+      `SELECT tg_user_id, username, contacted_at, sample_text, closed_at, assigned_account
+       FROM tg_lead
        WHERE contacted_at IS NOT NULL
          AND status NOT IN ('skip', 'rejected')`,
     );
@@ -620,6 +737,7 @@ export class LeadService {
           contactedAt: r.contacted_at,
           sampleText: r.sample_text,
           closedAt: r.closed_at,
+          assignedAccount: r.assigned_account ?? null,
         },
       ]),
     );
@@ -661,22 +779,42 @@ export class LeadService {
    * `replied_at` для этого не годится: его заполняет только `recount`, а
    * `markAnswered` не трогает, поэтому у большинства он пуст.
    */
-  public async outreachSummary(): Promise<{ contacted: number; replied: number }> {
-    const rows: Array<{ contacted: string; replied: string }> = await this.repo.query(
+  public async outreachSummary(): Promise<OutreachSummary> {
+    // Считаем сразу в разрезе источников, а итог складываем из тех же строк.
+    // Отдельный запрос «итого» был бы вторым определением одной метрики, и
+    // разъехались бы они молча — при первой же правке набора статусов.
+    const rows: Array<{
+      source: string;
+      leads: string;
+      contacted: string;
+      replied: string;
+    }> = await this.repo.query(
       `
       SELECT
+        source,
+        count(*)::text AS leads,
         count(*) FILTER (WHERE contacted_at IS NOT NULL)::text AS contacted,
         count(*) FILTER (
           WHERE contacted_at IS NOT NULL
             AND status IN ('replied', 'answered', 'registered', 'rejected')
         )::text AS replied
       FROM tg_lead
+      GROUP BY source
+      ORDER BY count(*) DESC
       `,
     );
 
+    const bySource: SourceSummary[] = rows.map((row) => ({
+      source: row.source as LeadSource,
+      leads: Number(row.leads),
+      contacted: Number(row.contacted),
+      replied: Number(row.replied),
+    }));
+
     return {
-      contacted: Number(rows[0]?.contacted ?? 0),
-      replied: Number(rows[0]?.replied ?? 0),
+      contacted: bySource.reduce((sum, row) => sum + row.contacted, 0),
+      replied: bySource.reduce((sum, row) => sum + row.replied, 0),
+      bySource,
     };
   }
 

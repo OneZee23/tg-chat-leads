@@ -37,6 +37,17 @@ teach-track-leadgen — дневной цикл
   yarn send:go             отправить — спросит подтверждение
   yarn send:release        разобрать застрявших в отправке
 
+ЛИДЫ НЕ ИЗ ЧАТОВ  (Google, Яндекс, Instagram — писать всё равно в Telegram)
+
+  curl -sS -XPOST 'http://127.0.0.1:3010/leads/import' \\
+    -H 'Content-Type: application/json' \\
+    -d '{"source":"google","items":[{"contact":"@ник","note":"откуда"}]}'
+
+  Источник ('google' | 'yandex' | 'instagram' | 'manual') пишется в лида, и
+  'yarn refresh' показывает процент ответа по каждому — ради этого сравнения
+  импорт и сделан. Не больше 50 контактов за раз: каждый — резолв ника
+  в Telegram с паузой, а лимит на резолв потом блокирует рассылку.
+
 ПОМЕТКИ
 
   yarn wrote @ник          написал руками

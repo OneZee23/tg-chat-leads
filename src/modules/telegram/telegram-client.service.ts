@@ -94,6 +94,11 @@ export class TelegramClientService implements OnModuleInit, OnModuleDestroy {
     return this.me ? this.me.id.toString() : null;
   }
 
+  /** Как этот аккаунт выглядит для человека: @ник или имя. */
+  public getMyTitle(): string | null {
+    return this.me ? describeUser(this.me) : null;
+  }
+
   /**
    * Единая точка перехвата FloodWait. Все запросы GramJS проходят через
    * client.invoke, поэтому оборачиваем именно его: любой лимит попадает в

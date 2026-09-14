@@ -89,10 +89,16 @@ function makeService(
     autoReplyMax: 40,
   };
 
+  // Пул аккаунтов с одним основным: обход диалогов ходит через него.
+  const accounts = {
+    list: () => [{ name: 'main', client, selfId: '999', title: '@me' }],
+  };
+
   const service = new DialogsService(
     config as never,
     {} as never,
     { getClient: () => client } as never,
+    accounts as never,
     leads as never,
   );
   return { service, client, leads };
@@ -458,5 +464,163 @@ describe('sendPreparedReplies', () => {
       'база недоступна',
     );
     expect(service.isSending()).toBe(false);
+  });
+});
+
+/**
+ * Два аккаунта.
+ *
+ * Главное здесь одно: ответ приходит тому, кто писал. Если второй аккаунт
+ * отправил письмо, а инбокс читается только с первого, человек считается
+ * промолчавшим — при том, что он ответил. Это условие запуска фичи, а не
+ * улучшение «потом», поэтому у него свои тесты.
+ */
+function makeTwoAccounts(over: {
+  mainDialogs?: unknown[];
+  secondDialogs?: unknown[];
+  mainMessages?: Array<{ out: boolean; date: number; message: string }>;
+  secondMessages?: Array<{ out: boolean; date: number; message: string }>;
+  candidates?: Map<string, unknown>;
+}) {
+  const makeClient = (
+    dialogs: unknown[],
+    messages: Array<{ out: boolean; date: number; message: string }>,
+  ) => ({
+    iterDialogs: jest.fn(async function* () {
+      for (const d of dialogs) yield d;
+    }),
+    getMessages: jest.fn(async () => messages),
+    sendMessage: jest.fn<Promise<void>, [unknown, Record<string, unknown>]>(
+      async () => undefined,
+    ),
+  });
+
+  const main = makeClient(over.mainDialogs ?? [], over.mainMessages ?? []);
+  const second = makeClient(over.secondDialogs ?? [], over.secondMessages ?? []);
+
+  const leads = {
+    getDialogCandidates: jest.fn(async () => over.candidates ?? new Map()),
+    markAnswered: jest.fn(async () => undefined),
+  };
+
+  const accounts = {
+    list: () => [
+      { name: 'main', client: main, selfId: '900', title: '@one' },
+      { name: 'second', client: second, selfId: '901', title: '@two' },
+    ],
+  };
+
+  const service = new DialogsService(
+    { limit: 100, deepLimit: 50, deepDelayMs: 0, autoReplyDelaySec: 0, autoReplyMax: 40 } as never,
+    {} as never,
+    { getClient: () => main } as never,
+    accounts as never,
+    leads as never,
+  );
+
+  return { service, main, second, leads };
+}
+
+function assignedCandidate(id: string, account: string | null): [string, unknown] {
+  return [
+    id,
+    {
+      tgUserId: id,
+      contactedAt: new Date((DUMPED_AT - 7200) * 1000),
+      sampleText: 'преподаю английский',
+      assignedAccount: account,
+    },
+  ];
+}
+
+describe('обход диалогов с двумя аккаунтами', () => {
+  const incoming = { out: false, date: DUMPED_AT, message: 'а сколько стоит?' };
+
+  it('в выгрузку попадают ответы с обоих аккаунтов', async () => {
+    const { service } = makeTwoAccounts({
+      mainDialogs: [dialogWithLast('1', 'one', incoming)],
+      secondDialogs: [dialogWithLast('2', 'two', incoming)],
+      mainMessages: [
+        { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
+        incoming,
+      ],
+      secondMessages: [
+        { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
+        incoming,
+      ],
+      candidates: new Map([assignedCandidate('1', 'main'), assignedCandidate('2', 'second')]),
+    });
+
+    const dump = await service.collectUnanswered(50);
+    expect(dump.dialogs.map((d) => d.tgUserId).sort()).toEqual(['1', '2']);
+    expect(dump.dialogs.find((d) => d.tgUserId === '2')?.account).toBe('second');
+  });
+
+  it('человека из лички обоих аккаунтов разбирает тот, кто ему писал', async () => {
+    // У человека есть личный чат и с нашим вторым номером. Читать надо
+    // переписку того, кто вёл аутрич, — иначе «неотвеченное» окажется из
+    // совсем другого разговора.
+    const { service, main, second } = makeTwoAccounts({
+      mainDialogs: [dialogWithLast('7', 'both', incoming)],
+      secondDialogs: [dialogWithLast('7', 'both', incoming)],
+      mainMessages: [{ out: false, date: DUMPED_AT, message: 'привет, как дела' }],
+      secondMessages: [
+        { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
+        incoming,
+      ],
+      candidates: new Map([assignedCandidate('7', 'second')]),
+    });
+
+    const dump = await service.collectUnanswered(50);
+    expect(dump.dialogs).toHaveLength(1);
+    expect(dump.dialogs[0].account).toBe('second');
+    // Историю у основного даже не спрашивали: переписку ведёт не он.
+    expect(main.getMessages).not.toHaveBeenCalled();
+    expect(second.getMessages).toHaveBeenCalled();
+  });
+
+  it('ответ уходит с того аккаунта, который вёл переписку', async () => {
+    const { service, main, second } = makeTwoAccounts({
+      mainDialogs: [dialog('5', 'nick')],
+      secondDialogs: [dialog('5', 'nick')],
+      secondMessages: [
+        { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
+        { out: false, date: DUMPED_AT - 600, message: 'а сколько стоит?' },
+      ],
+      candidates: new Map([assignedCandidate('5', 'second')]),
+    });
+
+    const result = await service.sendPreparedReplies(
+      [entry({ tgUserId: '5', body: 'бесплатно' })],
+      options(),
+    );
+
+    expect(result.sent).toBe(1);
+    expect(result.notFound).toBe(0);
+    expect(main.sendMessage).not.toHaveBeenCalled();
+    expect(second.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('не закреплённого разбирает первый, у кого нашёлся диалог', async () => {
+    // Так работают все, кому писали до появления второго аккаунта: у них
+    // assigned_account пустой, и переписка лежит у основного.
+    const { service, main, second } = makeTwoAccounts({
+      mainDialogs: [dialog('9', 'nick')],
+      secondDialogs: [dialog('9', 'nick')],
+      mainMessages: [
+        { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
+        { out: false, date: DUMPED_AT - 600, message: 'а сколько стоит?' },
+      ],
+      candidates: new Map([assignedCandidate('9', null)]),
+    });
+
+    const result = await service.sendPreparedReplies(
+      [entry({ tgUserId: '9', body: 'бесплатно' })],
+      options(),
+    );
+
+    expect(result.sent).toBe(1);
+    expect(main.sendMessage).toHaveBeenCalledTimes(1);
+    expect(second.sendMessage).not.toHaveBeenCalled();
   });
 });

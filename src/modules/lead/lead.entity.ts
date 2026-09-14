@@ -26,6 +26,22 @@ export const LEAD_STATUSES = [
 
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
+/**
+ * Канал СБОРА контакта — не канал переписки. Пишем мы всем одинаково,
+ * в Telegram; отличается только то, где человека нашли. Ради этого разреза
+ * поле и заведено: сравнить процент ответа по источникам и понять, куда
+ * вкладывать время на поиск.
+ */
+export const LEAD_SOURCES = [
+  'tg_chat', // сканер телеграм-чатов — единственный путь до сентября 2026
+  'google', // выдача Google
+  'yandex', // выдача Яндекса
+  'instagram', // профили в Instagram
+  'manual', // занесён руками, без конкретной площадки
+] as const;
+
+export type LeadSource = (typeof LEAD_SOURCES)[number];
+
 @Entity('tg_lead')
 // Дедуп живёт здесь, а не в коде: уникальность по telegram user_id.
 // Именно по id, а не по @username — username человек меняет когда захочет,
@@ -61,6 +77,14 @@ export class LeadEntity {
 
   @Column({ name: 'lang_code', type: 'varchar', length: 16, nullable: true })
   public langCode: string | null;
+
+  // Тип колонки объявлен ЯВНО. Для union из строковых литералов TypeORM не
+  // может вывести тип из метаданных TS (в рантайме там просто String) и берёт
+  // varchar без длины — то есть сущность и миграция описывают разные колонки,
+  // и `synchronize`/`migration:generate` начинают предлагать «починку» на
+  // ровном месте.
+  @Column({ name: 'source', type: 'varchar', length: 16, default: 'tg_chat' })
+  public source: LeadSource;
 
   // Чат, в котором человека увидели первым (как он записан в SCAN_CHATS).
   @Column({ name: 'source_chat', type: 'varchar', length: 128, nullable: true })
@@ -106,6 +130,16 @@ export class LeadEntity {
 
   @Column({ name: 'contacted_at', type: 'timestamptz', nullable: true })
   public contactedAt: Date | null;
+
+  /**
+   * Телеграм-аккаунт, который ведёт переписку с этим человеком.
+   *
+   * Проставляется при первой успешной отправке и дальше не меняется: если
+   * фоллоу-ап придёт с другого аккаунта, для получателя это два незнакомца
+   * с одинаковым текстом. NULL — ещё не писали.
+   */
+  @Column({ name: 'assigned_account', type: 'varchar', length: 32, nullable: true })
+  public assignedAccount: string | null;
 
   // Текст последнего входящего сообщения человека после нашего письма —
   // его ответ. Заполняется полным пересчётом (recount-replies).
