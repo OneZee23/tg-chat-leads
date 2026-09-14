@@ -199,10 +199,17 @@ export class SenderService {
 
     let consecutiveErrors = 0;
 
+    // Предпросмотр без единого поднятого аккаунта: Telegram лежит или сессия
+    // не задана. Показать очередь всё равно надо — раньше dry-run в Telegram
+    // не ходил вовсе, и отнимать эту возможность не за что.
+    const previewOnly = dryRun && runs.length === 0;
+
     for (const [index, lead] of targets.entries()) {
       report.attempted += 1;
 
-      const pick = pickAccount(lead.assignedAccount, this.loads(runs, dryRun));
+      const pick = previewOnly
+        ? { account: null, reason: null }
+        : pickAccount(lead.assignedAccount, this.loads(runs, dryRun));
       if (pick.reason) {
         const why = describePickFailure(pick.reason);
 
@@ -223,21 +230,22 @@ export class SenderService {
         continue;
       }
 
-      const run = runs.find((r) => r.account.name === pick.account);
-      /* istanbul ignore next: pickAccount выбирает только из этого же списка */
-      if (!run) throw new Error(`Аккаунт ${pick.account} исчез из пула`);
+      const run = runs.find((r) => r.account.name === pick.account) ?? null;
 
       if (dryRun) {
         // Считаем и в предпросмотре: иначе список покажет всех на одном
         // аккаунте, а в бою они разойдутся на два — и предпросмотр соврёт.
-        run.sentNow += 1;
+        if (run) run.sentNow += 1;
         report.entries.push({
           username: lead.username,
           result: 'dry-run',
-          account: run.account.name,
+          account: run?.account.name,
         });
         continue;
       }
+
+      /* istanbul ignore next: pickAccount выбирает только из этого же списка */
+      if (!run) throw new Error(`Аккаунт ${pick.account} исчез из пула`);
 
       // Между занятием пачки и очередью конкретного человека проходят
       // минуты. Сверка с личкой за это время могла перевести его в
