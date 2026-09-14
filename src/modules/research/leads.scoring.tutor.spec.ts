@@ -23,9 +23,9 @@ describe('detectSignals — профиль tutor', () => {
     expect(detectSignals('чем вести учёт занятий, посоветуйте', TUTOR_PROFILE)).toContain(
       'tool_search',
     );
-    expect(detectSignals('какую программу посоветуете для учёта', TUTOR_PROFILE)).toContain(
-      'tool_search',
-    );
+    expect(
+      detectSignals('какую программу посоветуете для учёта', TUTOR_PROFILE),
+    ).toContain('tool_search');
     expect(detectSignals('посоветуйте приложение, пожалуйста', TUTOR_PROFILE)).toContain(
       'tool_search',
     );
@@ -67,9 +67,9 @@ describe('detectSignals — профиль tutor', () => {
       expect(detectSignals('забыла, кто платил в этом месяце', TUTOR_PROFILE)).toContain(
         'accounting_pain',
       );
-      expect(detectSignals('потеряла учёт кто сколько занимался', TUTOR_PROFILE)).toContain(
-        'accounting_pain',
-      );
+      expect(
+        detectSignals('потеряла учёт кто сколько занимался', TUTOR_PROFILE),
+      ).toContain('accounting_pain');
     });
 
     it('НЕ ловит голое «веду» без объекта учёта — омоним «преподаю», @lead_a 23.2', () => {
@@ -83,22 +83,25 @@ describe('detectSignals — профиль tutor', () => {
 
     it('НЕ ловит человека вне темы репетиторства — @lead_f', () => {
       expect(
-        detectSignals('Я тоже в бьюти работаю, и начала со ставки чуть ниже рынка', TUTOR_PROFILE),
+        detectSignals(
+          'Я тоже в бьюти работаю, и начала со ставки чуть ниже рынка',
+          TUTOR_PROFILE,
+        ),
       ).not.toContain('accounting_pain');
     });
   });
 
   describe('payment_pain', () => {
     it('ловит боль с деньгами', () => {
-      expect(detectSignals('не помню, кто сколько должен за месяц', TUTOR_PROFILE)).toContain(
-        'payment_pain',
-      );
+      expect(
+        detectSignals('не помню, кто сколько должен за месяц', TUTOR_PROFILE),
+      ).toContain('payment_pain');
       expect(detectSignals('у него долг за три занятия', TUTOR_PROFILE)).toContain(
         'payment_pain',
       );
-      expect(detectSignals('ученик не заплатил уже второй месяц', TUTOR_PROFILE)).toContain(
-        'payment_pain',
-      );
+      expect(
+        detectSignals('ученик не заплатил уже второй месяц', TUTOR_PROFILE),
+      ).toContain('payment_pain');
       expect(detectSignals('мама забыла оплатить занятие', TUTOR_PROFILE)).toContain(
         'payment_pain',
       );
@@ -127,19 +130,22 @@ describe('detectSignals — профиль tutor', () => {
 
     it('НЕ ловит голое упоминание «долгов» в списке фич чужого продукта — @vendor_a', () => {
       expect(
-        detectSignals('Учёт оплат, долгов, абонементов. Книга учёта с выгрузкой в Excel', TUTOR_PROFILE),
+        detectSignals(
+          'Учёт оплат, долгов, абонементов. Книга учёта с выгрузкой в Excel',
+          TUTOR_PROFILE,
+        ),
       ).not.toContain('payment_pain');
     });
   });
 
   describe('package_pain', () => {
     it('ловит жалобные конструкции, а не голые слова темы', () => {
-      expect(detectSignals('беру предоплату, но путаюсь в остатках', TUTOR_PROFILE)).toContain(
-        'package_pain',
-      );
-      expect(detectSignals('никогда не помню, сколько занятий осталось', TUTOR_PROFILE)).toContain(
-        'package_pain',
-      );
+      expect(
+        detectSignals('беру предоплату, но путаюсь в остатках', TUTOR_PROFILE),
+      ).toContain('package_pain');
+      expect(
+        detectSignals('никогда не помню, сколько занятий осталось', TUTOR_PROFILE),
+      ).toContain('package_pain');
       expect(detectSignals('запутался с абонементами совсем', TUTOR_PROFILE)).toContain(
         'package_pain',
       );
@@ -167,19 +173,22 @@ describe('detectSignals — профиль tutor', () => {
       // «чтобы это был доход именно за месяц, не за счёт предоплат» — речь
       // о структуре дохода, не о путанице в учёте.
       expect(
-        detectSignals('чтобы это был доход именно за месяц, не за счёт предоплат', TUTOR_PROFILE),
+        detectSignals(
+          'чтобы это был доход именно за месяц, не за счёт предоплат',
+          TUTOR_PROFILE,
+        ),
       ).not.toContain('package_pain');
     });
   });
 
   describe('cancellation_pain', () => {
     it('ловит отмены и переносы', () => {
-      expect(detectSignals('клиент отменил занятие за час до начала', TUTOR_PROFILE)).toContain(
-        'cancellation_pain',
-      );
-      expect(detectSignals('ученик просто не пришёл на занятие', TUTOR_PROFILE)).toContain(
-        'cancellation_pain',
-      );
+      expect(
+        detectSignals('клиент отменил занятие за час до начала', TUTOR_PROFILE),
+      ).toContain('cancellation_pain');
+      expect(
+        detectSignals('ученик просто не пришёл на занятие', TUTOR_PROFILE),
+      ).toContain('cancellation_pain');
       expect(detectSignals('не предупредил об отмене вообще', TUTOR_PROFILE)).toContain(
         'cancellation_pain',
       );
@@ -190,7 +199,10 @@ describe('detectSignals — профиль tutor', () => {
 
     it('НЕ ловит риторический вопрос про перенос без жалобы — @lead_d 34.0', () => {
       expect(
-        detectSignals('Неудобно, если вдруг перенос занятия, то все, другая стоимость?!', TUTOR_PROFILE),
+        detectSignals(
+          'Неудобно, если вдруг перенос занятия, то все, другая стоимость?!',
+          TUTOR_PROFILE,
+        ),
       ).not.toContain('cancellation_pain');
     });
   });
@@ -199,20 +211,20 @@ describe('detectSignals — профиль tutor', () => {
     expect(detectSignals('все постоянно забывают про занятие', TUTOR_PROFILE)).toContain(
       'reminder_pain',
     );
-    expect(detectSignals('напоминаю каждому вручную перед уроком', TUTOR_PROFILE)).toContain(
-      'reminder_pain',
-    );
-    expect(detectSignals('приходится писать каждому за день до занятия', TUTOR_PROFILE)).toContain(
-      'reminder_pain',
-    );
+    expect(
+      detectSignals('напоминаю каждому вручную перед уроком', TUTOR_PROFILE),
+    ).toContain('reminder_pain');
+    expect(
+      detectSignals('приходится писать каждому за день до занятия', TUTOR_PROFILE),
+    ).toContain('reminder_pain');
   });
 
   it('ловит масштаб как усиливающий сигнал', () => {
     expect(detectSignals('у меня 15 учеников сейчас', TUTOR_PROFILE)).toContain('scale');
     expect(detectSignals('набрала группу за неделю', TUTOR_PROFILE)).toContain('scale');
-    expect(detectSignals('у меня полная запись на месяц вперёд', TUTOR_PROFILE)).toContain(
-      'scale',
-    );
+    expect(
+      detectSignals('у меня полная запись на месяц вперёд', TUTOR_PROFILE),
+    ).toContain('scale');
   });
 
   it('ловит школу как отдельный сегмент, не как штраф', () => {
@@ -225,12 +237,12 @@ describe('detectSignals — профиль tutor', () => {
   });
 
   it('ловит языковой центр и множественных преподавателей как school', () => {
-    expect(detectSignals('у нас языковой центр с пятью группами', TUTOR_PROFILE)).toContain(
-      'school',
-    );
-    expect(detectSignals('у нас два преподавателя на все группы', TUTOR_PROFILE)).toContain(
-      'school',
-    );
+    expect(
+      detectSignals('у нас языковой центр с пятью группами', TUTOR_PROFILE),
+    ).toContain('school');
+    expect(
+      detectSignals('у нас два преподавателя на все группы', TUTOR_PROFILE),
+    ).toContain('school');
   });
 
   it('ловит рекламу своих услуг — отрицательный сигнал', () => {
@@ -246,15 +258,15 @@ describe('detectSignals — профиль tutor', () => {
   });
 
   it('ловит клиента, а не преподавателя — отрицательный сигнал', () => {
-    expect(detectSignals('ищу репетитора по математике для сына', TUTOR_PROFILE)).toContain(
-      'student_side',
-    );
+    expect(
+      detectSignals('ищу репетитора по математике для сына', TUTOR_PROFILE),
+    ).toContain('student_side');
     expect(
       detectSignals('посоветуйте преподавателя английского для ребёнка', TUTOR_PROFILE),
     ).toContain('student_side');
-    expect(detectSignals('нужен репетитор на подготовку к экзамену', TUTOR_PROFILE)).toContain(
-      'student_side',
-    );
+    expect(
+      detectSignals('нужен репетитор на подготовку к экзамену', TUTOR_PROFILE),
+    ).toContain('student_side');
   });
 
   describe('vendor', () => {
@@ -274,7 +286,9 @@ describe('detectSignals — профиль tutor', () => {
     });
 
     it('ловит общие маркеры продвижения своего сервиса/бота', () => {
-      expect(detectSignals('сделал бота для расписания', TUTOR_PROFILE)).toContain('vendor');
+      expect(detectSignals('сделал бота для расписания', TUTOR_PROFILE)).toContain(
+        'vendor',
+      );
       expect(detectSignals('мой сервис уже всё делает за вас', TUTOR_PROFILE)).toContain(
         'vendor',
       );
@@ -376,13 +390,11 @@ describe('buildCandidates — профиль tutor', () => {
       [
         message({
           author: '@vendor',
-          text:
-            'Коллеги, вот расписание, которое работает из тг. Учёт оплат, долгов, абонементов. Книга учёта с выгрузкой в Excel.',
+          text: 'Коллеги, вот расписание, которое работает из тг. Учёт оплат, долгов, абонементов. Книга учёта с выгрузкой в Excel.',
         }),
         message({
           author: '@vendor',
-          text:
-            'Пока планирую такие функции: ставить отметку об оплате с автовнесением в книгу учёта доходов.',
+          text: 'Пока планирую такие функции: ставить отметку об оплате с автовнесением в книгу учёта доходов.',
         }),
         message({ author: '@real', text: 'веду учёт в тетради и постоянно путаюсь' }),
       ],
@@ -416,15 +428,13 @@ describe('приёмка: шесть контрольных человек из 
       [
         {
           author: '@lead_c',
-          text:
-            'Индивидуально? Речь не о Марине Ш или об Ольге (не помню фамилии, тоже ученица Спивака)? Такую сумму могут заплатить только сумасшедшие за урок (ИМХО)',
+          text: 'Индивидуально? Речь не о Марине Ш или об Ольге (не помню фамилии, тоже ученица Спивака)? Такую сумму могут заплатить только сумасшедшие за урок (ИМХО)',
           date: NOW - DAY,
           link: null,
         },
         {
           author: '@lead_c',
-          text:
-            'У меня расписание а Экселе, а оплаты в блокноте. Регулярно кто-то оплачивает не сразу... в группах абонементы',
+          text: 'У меня расписание а Экселе, а оплаты в блокноте. Регулярно кто-то оплачивает не сразу... в группах абонементы',
           date: NOW - DAY,
           link: null,
         },
@@ -444,8 +454,7 @@ describe('приёмка: шесть контрольных человек из 
       [
         {
           author: '@lead_b',
-          text:
-            'Я сама веду. Скачала офиц бланк, он в эксель. Такую же табличку с оплатами я вела и раньше, чисто для себя',
+          text: 'Я сама веду. Скачала офиц бланк, он в эксель. Такую же табличку с оплатами я вела и раньше, чисто для себя',
           date: NOW - DAY,
           link: null,
         },
@@ -463,15 +472,13 @@ describe('приёмка: шесть контрольных человек из 
       [
         {
           author: '@vendor_a',
-          text:
-            'Коллеги, вот расписание, которое работает из тг. Учёт оплат, долгов, абонементов. Книга учёта с выгрузкой в Excel и квитанции об оплате.',
+          text: 'Коллеги, вот расписание, которое работает из тг. Учёт оплат, долгов, абонементов. Книга учёта с выгрузкой в Excel и квитанции об оплате.',
           date: NOW - DAY,
           link: null,
         },
         {
           author: '@vendor_a',
-          text:
-            'Пока планирую такие функции: ставить отметку об оплате с автовнесением в книгу учёта доходов и отсылкой чека родителю.',
+          text: 'Пока планирую такие функции: ставить отметку об оплате с автовнесением в книгу учёта доходов и отсылкой чека родителю.',
           date: NOW - DAY,
           link: null,
         },
@@ -501,8 +508,7 @@ describe('приёмка: шесть контрольных человек из 
         },
         {
           author: '@lead_a',
-          text:
-            'И я веду его сразу по какой-то программе, чтоб у ученика было ощущение старта. Мне кажется, что проводить необучающий первый урок неправильно.',
+          text: 'И я веду его сразу по какой-то программе, чтоб у ученика было ощущение старта. Мне кажется, что проводить необучающий первый урок неправильно.',
           date: NOW - DAY,
           link: null,
         },
@@ -526,8 +532,7 @@ describe('приёмка: шесть контрольных человек из 
         },
         {
           author: '@lead_d',
-          text:
-            'Добрый день! У меня впервые такое, что ученик в 8 классе 4 разделить на 2 не может. По каким лучше учебникам пройти программу началки?',
+          text: 'Добрый день! У меня впервые такое, что ученик в 8 классе 4 разделить на 2 не может. По каким лучше учебникам пройти программу началки?',
           date: NOW - DAY,
           link: null,
         },
@@ -545,15 +550,13 @@ describe('приёмка: шесть контрольных человек из 
       [
         {
           author: '@lead_f',
-          text:
-            'Есть люди, у которых есть возможность заплатить, но они экономят, продавливают скидку, это как развлечение такое. Я тоже в бьюти работаю, и начала со ставки чуть ниже рынка',
+          text: 'Есть люди, у которых есть возможность заплатить, но они экономят, продавливают скидку, это как развлечение такое. Я тоже в бьюти работаю, и начала со ставки чуть ниже рынка',
           date: NOW - DAY,
           link: null,
         },
         {
           author: '@lead_f',
-          text:
-            'Прям моя мечта получить миллион за месяц, думаю, что не обязательно на репетиторстве, и так, чтобы это был доход именно за месяц, не за счёт предоплат.',
+          text: 'Прям моя мечта получить миллион за месяц, думаю, что не обязательно на репетиторстве, и так, чтобы это был доход именно за месяц, не за счёт предоплат.',
           date: NOW - DAY,
           link: null,
         },

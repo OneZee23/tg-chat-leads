@@ -5,7 +5,12 @@ import { TelegramAccountsService } from '@modules/telegram/telegram-accounts.ser
 import { TelegramConfig } from '@modules/telegram/telegram.config';
 
 @Module({
-  providers: [TelegramConfig, FloodWaitTracker, TelegramClientService, TelegramAccountsService],
+  providers: [
+    TelegramConfig,
+    FloodWaitTracker,
+    TelegramClientService,
+    TelegramAccountsService,
+  ],
   exports: [TelegramClientService, TelegramAccountsService, FloodWaitTracker],
 })
 export class TelegramModule {}

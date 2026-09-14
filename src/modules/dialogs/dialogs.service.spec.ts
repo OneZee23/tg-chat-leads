@@ -511,7 +511,13 @@ function makeTwoAccounts(over: {
   };
 
   const service = new DialogsService(
-    { limit: 100, deepLimit: 50, deepDelayMs: 0, autoReplyDelaySec: 0, autoReplyMax: 40 } as never,
+    {
+      limit: 100,
+      deepLimit: 50,
+      deepDelayMs: 0,
+      autoReplyDelaySec: 0,
+      autoReplyMax: 40,
+    } as never,
     {} as never,
     { getClient: () => main } as never,
     accounts as never,
@@ -548,7 +554,10 @@ describe('обход диалогов с двумя аккаунтами', () =>
         { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
         incoming,
       ],
-      candidates: new Map([assignedCandidate('1', 'main'), assignedCandidate('2', 'second')]),
+      candidates: new Map([
+        assignedCandidate('1', 'main'),
+        assignedCandidate('2', 'second'),
+      ]),
     });
 
     const dump = await service.collectUnanswered(50);

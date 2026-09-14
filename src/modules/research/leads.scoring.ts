@@ -716,10 +716,7 @@ export function buildCandidates(
   }
 
   for (const candidate of byAuthor.values()) {
-    const base = candidate.signals.reduce(
-      (sum, s) => sum + (profile.weights[s] ?? 0),
-      0,
-    );
+    const base = candidate.signals.reduce((sum, s) => sum + (profile.weights[s] ?? 0), 0);
     // Активность без действия ничего не стоит: человек, который много пишет и
     // где-то работает, но не нанимает и не реферит, - собеседник, а не лид.
     if (!hasStrongSignal(candidate.signals, profile)) {

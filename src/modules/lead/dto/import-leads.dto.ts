@@ -53,6 +53,18 @@ export class ImportLeadItemDto {
   @IsString()
   @MaxLength(2000)
   public readonly note?: string;
+
+  /**
+   * Текст объявления человека — как он сам описывает, что преподаёт.
+   *
+   * Не украшение: по нему строится персональная первая строка письма
+   * (`buildHook`). Без него внешнему лиду уходит общая формулировка, и
+   * сравнение источников меряет уже не источник, а наличие персонализации.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  public readonly about?: string;
 }
 
 export class ImportLeadsDto {

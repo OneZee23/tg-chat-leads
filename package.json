@@ -36,6 +36,7 @@
     "wrote": "sh scripts/mark.sh contacted",
     "skip": "sh scripts/mark.sh skip",
     "chats": "curl -sS 'http://127.0.0.1:3010/chats?withCounts=true'",
+    "harvest": "ts-node -r dotenv/config scripts/harvest-tme.ts",
     "session:create": "ts-node -r dotenv/config scripts/create-tg-session.ts",
     "session:create:second": "ts-node -r dotenv/config scripts/create-tg-session.ts second",
     "rescore": "ts-node scripts/rescore.ts",

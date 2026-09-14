@@ -61,7 +61,9 @@ async function main(): Promise<void> {
   }
 
   if (SECOND) {
-    console.log('Вход во ВТОРОЙ аккаунт. Нужен другой номер, не тот, что в TG_SESSION.\n');
+    console.log(
+      'Вход во ВТОРОЙ аккаунт. Нужен другой номер, не тот, что в TG_SESSION.\n',
+    );
   }
 
   const phone = (SECOND ? '' : PHONE) || (await ask('Телефон в формате +79991234567: '));

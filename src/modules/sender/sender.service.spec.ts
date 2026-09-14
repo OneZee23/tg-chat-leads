@@ -103,7 +103,9 @@ function makeSender(
 }
 
 /** Кому что ушло: аккаунт → список ников. */
-function sentBy(clients: Map<string, { sendMessage: jest.Mock }>): Record<string, number> {
+function sentBy(
+  clients: Map<string, { sendMessage: jest.Mock }>,
+): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [name, client] of clients) out[name] = client.sendMessage.mock.calls.length;
   return out;
@@ -141,7 +143,10 @@ describe('SenderService: выбор аккаунта', () => {
 
     await service.run();
 
-    expect(attempts.start).toHaveBeenCalledWith(expect.objectContaining({ id: '1' }), 'main');
+    expect(attempts.start).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '1' }),
+      'main',
+    );
     expect(leads.finishSending).toHaveBeenCalledWith(
       '1',
       'contacted',

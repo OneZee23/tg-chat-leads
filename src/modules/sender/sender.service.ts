@@ -171,9 +171,7 @@ export class SenderService {
       if (runs.length === 0) {
         // Отправлять нечем: либо аккаунты не подняты, либо все зажаты.
         report.stoppedBecause =
-          blocked.length > 0
-            ? blocked.join('; ')
-            : 'нет подключённых телеграм-аккаунтов';
+          blocked.length > 0 ? blocked.join('; ') : 'нет подключённых телеграм-аккаунтов';
         return report;
       }
 
@@ -187,9 +185,7 @@ export class SenderService {
 
     // Бюджет режет запрошенное число, и об этом честно пишем в отчёте —
     // молча урезать значит соврать о том, сколько людей получит письмо.
-    const limit = dryRun
-      ? requested
-      : Math.min(requested, report.dailyBudget.remaining);
+    const limit = dryRun ? requested : Math.min(requested, report.dailyBudget.remaining);
 
     // В dry-run лидов не занимаем: статусы должны остаться нетронутыми,
     // иначе «просто посмотреть» молча выведет людей из очереди.
@@ -297,8 +293,7 @@ export class SenderService {
         this.logger.warn(`Не отправлено @${lead.username}: ${outcome.error}`);
 
         if (outcome.fatal) {
-          report.stoppedBecause =
-            `аккаунт ограничен (${run.account.title}): ${outcome.error}`;
+          report.stoppedBecause = `аккаунт ограничен (${run.account.title}): ${outcome.error}`;
           report.fatal = true;
           // Ограничение уже наступило — сбрасываем кеш статуса, чтобы
           // следующий запуск спросил @SpamBot, а не поверил старому «ок».

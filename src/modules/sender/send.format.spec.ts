@@ -153,7 +153,14 @@ describe('formatSendReport', () => {
     fatal: false,
     dailyBudget: { limit: 20, used: 5, remaining: 15, unlimited: false },
     accounts: [
-      { name: 'main', title: '@me', sentNow: 3, used: 5, remaining: 15, unlimited: false },
+      {
+        name: 'main',
+        title: '@me',
+        sentNow: 3,
+        used: 5,
+        remaining: 15,
+        unlimited: false,
+      },
     ],
     entries: [
       { username: 'a', result: 'dry-run' as const },
@@ -202,8 +209,22 @@ describe('formatSendReport', () => {
       ...report,
       dryRun: false,
       accounts: [
-        { name: 'main', title: '@one', sentNow: 2, used: 12, remaining: 8, unlimited: false },
-        { name: 'second', title: '@two', sentNow: 1, used: 3, remaining: 17, unlimited: false },
+        {
+          name: 'main',
+          title: '@one',
+          sentNow: 2,
+          used: 12,
+          remaining: 8,
+          unlimited: false,
+        },
+        {
+          name: 'second',
+          title: '@two',
+          sentNow: 1,
+          used: 3,
+          remaining: 17,
+          unlimited: false,
+        },
       ],
       entries: [
         { username: 'a', result: 'sent' as const, account: 'main' },

@@ -1,4 +1,8 @@
-import { AccountLoad, describePickFailure, pickAccount } from '@modules/sender/account-pick';
+import {
+  AccountLoad,
+  describePickFailure,
+  pickAccount,
+} from '@modules/sender/account-pick';
 
 const UNLIMITED = Number.MAX_SAFE_INTEGER;
 
@@ -29,27 +33,38 @@ describe('pickAccount: новый лид', () => {
   it('без потолка раскладывает по числу отправленного, а не всегда на первый', () => {
     // SEND_MAX_PER_DAY=0 по умолчанию: остаток у всех одинаково огромный.
     // Выбор по остатку молча свёлся бы к «всегда main».
-    expect(pickAccount(null, [load('main', 12), load('second', 3)])).toEqual({ account: 'second', reason: null });
+    expect(pickAccount(null, [load('main', 12), load('second', 3)])).toEqual({
+      account: 'second',
+      reason: null,
+    });
   });
 
   it('при равной загрузке — основной: он прогрет, второй ещё нет', () => {
-    expect(pickAccount(null, [load('main', 7), load('second', 7)])).toEqual({ account: 'main', reason: null });
+    expect(pickAccount(null, [load('main', 7), load('second', 7)])).toEqual({
+      account: 'main',
+      reason: null,
+    });
   });
 
   it('с потолком выбирает того, у кого больше осталось', () => {
-    expect(
-      pickAccount(null, [load('main', 40, 5), load('second', 10, 35)]),
-    ).toEqual({ account: 'second', reason: null });
+    expect(pickAccount(null, [load('main', 40, 5), load('second', 10, 35)])).toEqual({
+      account: 'second',
+      reason: null,
+    });
   });
 
   it('аккаунт без остатка пропускается, даже если написал меньше всех', () => {
-    expect(
-      pickAccount(null, [load('main', 44, 1), load('second', 0, 0)]),
-    ).toEqual({ account: 'main', reason: null });
+    expect(pickAccount(null, [load('main', 44, 1), load('second', 0, 0)])).toEqual({
+      account: 'main',
+      reason: null,
+    });
   });
 
   it('все исчерпаны — не отправляем', () => {
-    expect(pickAccount(null, [load('main', 45, 0), load('second', 45, 0)])).toEqual({ account: null, reason: 'all_exhausted' });
+    expect(pickAccount(null, [load('main', 45, 0), load('second', 45, 0)])).toEqual({
+      account: null,
+      reason: 'all_exhausted',
+    });
   });
 
   it('ни одного аккаунта — не отправляем', () => {
@@ -60,7 +75,11 @@ describe('pickAccount: новый лид', () => {
 
 describe('describePickFailure', () => {
   it('объясняет каждую причину по-русски', () => {
-    for (const reason of ['assigned_exhausted', 'assigned_missing', 'all_exhausted'] as const) {
+    for (const reason of [
+      'assigned_exhausted',
+      'assigned_missing',
+      'all_exhausted',
+    ] as const) {
       expect(describePickFailure(reason)).toMatch(/[а-я]/);
     }
   });

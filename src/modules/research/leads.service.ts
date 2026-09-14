@@ -113,7 +113,8 @@ export class LeadsService {
     // profile.defaultMinScore не задан у REFERRAL_PROFILE — там всегда падаем
     // на config.leadsMinScore, как и раньше. У tutor свой порог: общий 0
     // пропускал в отчёт даже кандидатов без единого сигнала боли.
-    const minScore = params.minScore ?? profile.defaultMinScore ?? this.config.leadsMinScore;
+    const minScore =
+      params.minScore ?? profile.defaultMinScore ?? this.config.leadsMinScore;
 
     if (chats.length === 0) throw new Error('Не задан чат: RESEARCH_CHATS пуст');
 

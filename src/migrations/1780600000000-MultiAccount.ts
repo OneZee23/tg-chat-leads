@@ -52,7 +52,11 @@ export class MultiAccount1780600000000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP INDEX IF EXISTS "idx_tg_send_attempt_account_started"`);
-    await queryRunner.query(`ALTER TABLE "tg_lead" DROP COLUMN IF EXISTS "assigned_account"`);
-    await queryRunner.query(`ALTER TABLE "tg_send_attempt" DROP COLUMN IF EXISTS "account"`);
+    await queryRunner.query(
+      `ALTER TABLE "tg_lead" DROP COLUMN IF EXISTS "assigned_account"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "tg_send_attempt" DROP COLUMN IF EXISTS "account"`,
+    );
   }
 }

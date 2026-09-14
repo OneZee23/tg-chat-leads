@@ -34,6 +34,7 @@ export type LeadStatus = (typeof LEAD_STATUSES)[number];
  */
 export const LEAD_SOURCES = [
   'tg_chat', // сканер телеграм-чатов — единственный путь до сентября 2026
+  'tg_public', // публичный канал объявлений, собран по http (yarn harvest)
   'google', // выдача Google
   'yandex', // выдача Яндекса
   'instagram', // профили в Instagram
