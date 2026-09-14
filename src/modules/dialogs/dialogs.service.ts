@@ -562,9 +562,24 @@ export class DialogsService {
       dialogsIterated: 0,
       dialogsLimit: this.config.limit,
       unseen: [],
+      accounts: [],
       dialogs: [],
       trivial: [],
       stoppedBecause: 'кандидаты закончились',
+    };
+
+    // Счётчики по аккаунтам: с двумя личками надо видеть, где именно копится
+    // работа, — иначе непонятно, чей аккаунт открывать.
+    const perAccount = new Map<string, InboxDump['accounts'][number]>();
+    const countFor = (account: TelegramAccount): InboxDump['accounts'][number] => {
+      const row = perAccount.get(account.name) ?? {
+        name: account.name,
+        title: account.title,
+        seen: 0,
+        needReply: 0,
+      };
+      perAccount.set(account.name, row);
+      return row;
     };
 
     // Кого проход реально увидел. Без этого счётчика «кандидаты
@@ -587,6 +602,7 @@ export class DialogsService {
       if (seen.has(candidate.tgUserId)) continue;
       if (!this.ownsDialog(account, candidate.assignedAccount)) continue;
       dump.dialogsSeen += 1;
+      countFor(account).seen += 1;
       seen.add(candidate.tgUserId);
 
       // Пред-фильтр: последнее сообщение наше или пустое — читать историю не за чем.
@@ -655,9 +671,25 @@ export class DialogsService {
 
       // Эвристика уверена, что ответа не требует, — в отдельный блок, чтобы
       // не тратить внимание на пятьдесят «ок».
-      if (decision.action === 'clear') dump.trivial.push(entry);
-      else dump.dialogs.push(entry);
+      if (decision.action === 'clear') {
+        dump.trivial.push(entry);
+      } else {
+        dump.dialogs.push(entry);
+        countFor(account).needReply += 1;
+      }
     }
+
+    // Порядок как у пула: основной первым. Аккаунты без единого осмотренного
+    // диалога в отчёт всё равно попадают — «ноль» здесь тоже ответ.
+    dump.accounts = this.accounts.list().map(
+      (account) =>
+        perAccount.get(account.name) ?? {
+          name: account.name,
+          title: account.title,
+          seen: 0,
+          needReply: 0,
+        },
+    );
 
     dump.candidatesUnseen = dump.candidatesTotal - seen.size;
     for (const [id, c] of candidates) {
@@ -679,7 +711,10 @@ export class DialogsService {
       );
     }
     this.logger.log(
-      `Выгрузка: нужен ответ ${dump.dialogs.length}, тривиальных ${dump.trivial.length}`,
+      `Выгрузка: нужен ответ ${dump.dialogs.length}, тривиальных ${dump.trivial.length}` +
+        (dump.accounts.length > 1
+          ? ` (${dump.accounts.map((a) => `${a.title}: ${a.needReply}`).join(', ')})`
+          : ''),
     );
     return dump;
   }

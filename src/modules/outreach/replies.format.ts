@@ -21,14 +21,23 @@ export function formatRepliesWorklist(leads: LeadEntity[]): string {
 
   const lines: string[] = ['', `Ответили — в работе ${leads.length} чел.`, ''];
 
+  // Аккаунт подписываем, только когда их в списке больше одного: пока он
+  // один, приписка в каждой строке — шум. Но если хоть кто-то пришёл со
+  // второго, знать надо про каждого: отвечать нужно из ТОЙ переписки,
+  // ответ с другого номера человек прочитает как сообщение от постороннего.
+  const accounts = new Set(leads.map((lead) => lead.assignedAccount ?? 'main'));
+  const showAccount = accounts.size > 1 || !accounts.has('main');
+
   leads.forEach((lead, index) => {
     const nick = lead.username ? `@${lead.username}` : `id${lead.tgUserId}`;
     const subject = detectSubject(lead.sampleText);
     const s = suggestReply(lead.replyText ?? '');
+    const whose = showAccount ? `  ·  ${lead.assignedAccount ?? 'main'}` : '';
 
     lines.push(
       `${String(index + 1).padStart(2, ' ')}. ${nick}` +
-        (subject ? `  ·  ${subject}` : ''),
+        (subject ? `  ·  ${subject}` : '') +
+        whose,
     );
     lines.push(`    он: ${oneLine(lead.replyText)}`);
     lines.push(`    → ${s.hint}`);
@@ -39,6 +48,12 @@ export function formatRepliesWorklist(leads: LeadEntity[]): string {
   });
 
   lines.push('—'.repeat(60));
+  if (showAccount) {
+    lines.push(
+      'Справа от предмета — аккаунт, который вёл переписку. Отвечать только',
+      'из него: с другого номера это сообщение от постороннего.',
+    );
+  }
   lines.push('Ответил — пометь: yarn wrote @nick  (или yarn skip @nick, если отказ)');
   lines.push(
     'Черновик — заготовка, правь под человека. На вопросах черновика нет намеренно.',

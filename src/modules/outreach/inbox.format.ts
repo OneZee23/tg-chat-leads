@@ -62,8 +62,24 @@ export interface InboxDump {
    * «упёрлись в лимит» от «диалоги у аккаунта просто закончились»: без него
    * подсказка сравнивала пройденное с числом кандидатов и советовала поднять
    * лимит там, где он ни при чём.
+   *
+   * Лимит применяется К КАЖДОМУ аккаунту: у каждой лички своё окно обхода.
+   * Поэтому сравнивать `dialogsIterated` надо с лимитом, умноженным на число
+   * аккаунтов, — см. `accounts.length`.
    */
   dialogsLimit: number;
+  /**
+   * Разрез по аккаунтам: где сколько нашлось. С одним аккаунтом строка
+   * ровно одна, и в отчёт она не печатается — повторяла бы общий итог.
+   */
+  accounts: Array<{
+    name: string;
+    title: string;
+    /** Диалогов с теми, кому писали, осмотрено этим аккаунтом. */
+    seen: number;
+    /** Из них требуют ответа. */
+    needReply: number;
+  }>;
   /**
    * Кого не нашли — поимённо. Без этого списка причина неосмотренных
    * угадывалась неделю: архив, лимит, неудачные отправки. С ним она
@@ -181,15 +197,17 @@ export function formatInboxSummary(dump: InboxDump, path: string): string {
     '',
     `Выгрузка на ${dump.createdAt}: нужен ответ — ${dump.dialogs.length}, тривиальных — ${dump.trivial.length}.`,
     `Проверено диалогов с теми, кому писали: ${dump.dialogsSeen} из ${dump.candidatesTotal}. Остановка: ${dump.stoppedBecause}.`,
+    ...summaryAccountLines(dump),
     ...(dump.candidatesUnseen > 0
       ? [
           '',
-          `⚠ НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: ${dump.candidatesUnseen}. Обход прошёл ${dump.dialogsIterated} диалогов из ${dump.dialogsLimit} возможных.`,
-          ...(dump.dialogsIterated >= dump.dialogsLimit
+          `⚠ НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: ${dump.candidatesUnseen}. Обход прошёл ${dump.dialogsIterated} диалогов из ${totalDialogsLimit(dump)} возможных.`,
+          ...(dump.dialogsIterated >= totalDialogsLimit(dump)
             ? ['  Обход упёрся в лимит — подними DIALOGS_LIMIT в .env и повтори.']
             : [
-                '  В лимит не упёрлись: диалоги у аккаунта закончились раньше.',
-                '  Значит, чата с этими людьми на аккаунте нет — список в конце файла.',
+                '  В лимит не упёрлись: диалоги у аккаунтов закончились раньше.',
+                '  Значит, чата с этими людьми ни на одном аккаунте нет —',
+                '  список в конце файла.',
               ]),
         ]
       : []),
@@ -202,6 +220,28 @@ export function formatInboxSummary(dump: InboxDump, path: string): string {
     'затем yarn outbox:send.',
     '',
   ].join('\n');
+}
+
+/**
+ * Сколько диалогов обход мог пройти всего. DIALOGS_LIMIT — окно на КАЖДЫЙ
+ * аккаунт, поэтому с двумя аккаунтами потолок вдвое выше. Без умножения
+ * подсказка советовала бы поднять лимит на ровном месте.
+ */
+function totalDialogsLimit(dump: InboxDump): number {
+  return dump.dialogsLimit * Math.max(1, dump.accounts?.length ?? 1);
+}
+
+/** Где что нашлось. Пока аккаунт один, строка повторяла бы общий итог. */
+function summaryAccountLines(dump: InboxDump): string[] {
+  const accounts = dump.accounts ?? [];
+  if (accounts.length < 2) return [];
+
+  return [
+    'По аккаунтам: ' +
+      accounts
+        .map((a) => `${a.title} — осмотрено ${a.seen}, нужен ответ ${a.needReply}`)
+        .join('; '),
+  ];
 }
 
 function oneLine(text: string): string {

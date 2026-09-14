@@ -33,6 +33,7 @@ function dump(over: Partial<InboxDump> = {}): InboxDump {
     candidatesUnseen: 0,
     dialogsIterated: 500,
     dialogsLimit: 5000,
+    accounts: [{ name: 'main', title: '@one', seen: 412, needReply: 1 }],
     unseen: [],
     dialogs: [dialog()],
     trivial: [],
@@ -167,7 +168,7 @@ describe('предупреждение о неосмотренных', () => {
     expect(out).toContain('НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: 233');
     expect(out).toContain('1141 диалогов из 5000');
     expect(out).not.toContain('DIALOGS_LIMIT');
-    expect(out).toContain('диалоги у аккаунта закончились раньше');
+    expect(out).toContain('диалоги у аккаунтов закончились раньше');
   });
 });
 
@@ -189,5 +190,47 @@ describe('список ненайденных в конце файла', () => {
 
   it('без ненайденных секции нет', () => {
     expect(formatInbox(dump())).not.toContain('Не найдены среди диалогов');
+  });
+});
+
+describe('formatInboxSummary: два аккаунта', () => {
+  it('показывает, в чьей личке копится работа', () => {
+    const out = formatInboxSummary(
+      dump({
+        accounts: [
+          { name: 'main', title: '@one', seen: 300, needReply: 9 },
+          { name: 'second', title: '@two', seen: 44, needReply: 3 },
+        ],
+      }),
+      'inbox/file.md',
+    );
+
+    expect(out).toContain('@one — осмотрено 300, нужен ответ 9');
+    expect(out).toContain('@two — осмотрено 44, нужен ответ 3');
+  });
+
+  it('с одним аккаунтом разрез не печатается: он повторял бы итог', () => {
+    expect(formatInboxSummary(dump(), 'inbox/file.md')).not.toContain('По аккаунтам');
+  });
+
+  it('потолок обхода считается на каждый аккаунт, а не на всех сразу', () => {
+    // DIALOGS_LIMIT — окно на личку. С двумя аккаунтами пройти можно вдвое
+    // больше, и без умножения совет «подними лимит» давался бы на ровном
+    // месте — при том, что обход в него не упирался.
+    const out = formatInboxSummary(
+      dump({
+        candidatesUnseen: 5,
+        dialogsIterated: 600,
+        dialogsLimit: 500,
+        accounts: [
+          { name: 'main', title: '@one', seen: 300, needReply: 0 },
+          { name: 'second', title: '@two', seen: 300, needReply: 0 },
+        ],
+      }),
+      'inbox/file.md',
+    );
+
+    expect(out).toContain('600 диалогов из 1000 возможных');
+    expect(out).not.toContain('подними DIALOGS_LIMIT');
   });
 });
