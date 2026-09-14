@@ -28,6 +28,7 @@ const SIGNAL_LABEL: Readonly<Record<LeadSignal, string>> = {
   school: '🏫 школа / языковой центр',
   self_promo: '🔻 рекламирует свои услуги',
   student_side: '🔻 сам ищет репетитора',
+  vendor: '🔻 продаёт конкурирующий продукт',
 };
 
 export function leadsFileName(startedAt: Date): string {
