@@ -26,6 +26,9 @@ function makeSender(
     /** Отправлено каждым за сутки — база для выбора аккаунта. */
     used?: Record<string, number>;
     maxPerDay?: number;
+    /** Когда аккаунт последний раз ловил PEER_FLOOD. */
+    floods?: Record<string, Date>;
+    peerFloodCooldownMin?: number;
   } = {},
 ) {
   const names = over.accounts ?? ['main', 'second'];
@@ -68,6 +71,7 @@ function makeSender(
   const attempts = {
     start: jest.fn(async () => 'attempt-id'),
     finish: jest.fn(async () => undefined),
+    lastPeerFlood: jest.fn(async () => new Map(Object.entries(over.floods ?? {}))),
     budget: jest.fn(async (limit: number, account?: string) => {
       const spent = account ? (used[account] ?? 0) : 0;
       return {
@@ -89,6 +93,7 @@ function makeSender(
       delaySec: 0,
       maxConsecutiveErrors: 3,
       maxPerDay,
+      peerFloodCooldownMin: over.peerFloodCooldownMin ?? 60,
       personalized: false,
       personalizedImages: false,
     } as never,
@@ -194,6 +199,61 @@ describe('SenderService: выбор аккаунта', () => {
       ['main', 1],
       ['second', 1],
     ]);
+  });
+
+  it('после PEER_FLOOD аккаунт отдыхает, а второй продолжает', async () => {
+    // 14.09.2026: оба аккаунта поймали PEER_FLOOD и продолжили работать —
+    // это окрик «слишком быстро», не бан. Но продавливать его нельзя, а
+    // останавливать ВСЮ рассылку из-за одного аккаунта теперь незачем.
+    const { service, clients } = makeSender({
+      leads: [lead('1', 'a'), lead('2', 'b')],
+      floods: { main: new Date(Date.now() - 5 * 60_000) },
+    });
+
+    const report = await service.run();
+
+    expect(report.sent).toBe(2);
+    expect(sentBy(clients)).toEqual({ main: 0, second: 2 });
+    expect(report.accounts.map((a) => a.name)).toEqual(['second']);
+  });
+
+  it('отдых кончился — аккаунт снова в работе', async () => {
+    const { service, clients } = makeSender({
+      leads: [lead('1', 'a'), lead('2', 'b')],
+      floods: { main: new Date(Date.now() - 120 * 60_000) },
+      peerFloodCooldownMin: 60,
+    });
+
+    await service.run();
+    expect(sentBy(clients)).toEqual({ main: 1, second: 1 });
+  });
+
+  it('зажаты все — говорим, кто и до какого времени, и не шлём', async () => {
+    const { service, clients, leads } = makeSender({
+      leads: [lead('1', 'a')],
+      accounts: ['main'],
+      floods: { main: new Date(Date.now() - 60_000) },
+    });
+
+    const report = await service.run();
+
+    expect(report.sent).toBe(0);
+    expect(report.stoppedBecause).toContain('PEER_FLOOD');
+    expect(report.stoppedBecause).toMatch(/отдыхает ещё \d+ мин/);
+    expect(sentBy(clients)).toEqual({ main: 0 });
+    // Очередь не тронута: лидов не занимали.
+    expect(leads.claimForSending).not.toHaveBeenCalled();
+  });
+
+  it('предпросмотр отдыхающий аккаунт не прячет: смотреть можно всегда', async () => {
+    const { service } = makeSender({
+      leads: [lead('1', 'a')],
+      accounts: ['main'],
+      floods: { main: new Date(Date.now() - 60_000) },
+    });
+
+    const report = await service.run(undefined, true);
+    expect(report.entries.map((e) => e.result)).toEqual(['dry-run']);
   });
 
   it('предпросмотр показывает очередь и без единого поднятого аккаунта', async () => {

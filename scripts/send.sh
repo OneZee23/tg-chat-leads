@@ -62,6 +62,9 @@ fi
 
 HOST="${LEADGEN_HOST:-http://127.0.0.1:3010}"
 
-curl -sS --max-time 900 -XPOST "$HOST/send/run" \
+# Ждём до часа: при человеческой паузе (SEND_DELAY_SEC=60 и выше) пачка из
+# сорока сообщений идёт дольше получаса, а оборванный по таймауту curl
+# отнимает отчёт — рассылка при этом продолжается на сервере.
+curl -sS --max-time 3600 -XPOST "$HOST/send/run" \
   -H 'content-type: application/json' \
   -d "$BODY"

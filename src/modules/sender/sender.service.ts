@@ -337,12 +337,28 @@ export class SenderService {
   ): Promise<{ runs: AccountRun[]; blocked: string[] }> {
     const runs: AccountRun[] = [];
     const blocked: string[] = [];
+    const floods = await this.attempts.lastPeerFlood();
+    const cooldownMs = this.config.peerFloodCooldownMin * 60_000;
 
     for (const account of this.accounts.list()) {
       const limit = this.flood.forMethod('contacts.ResolveUsername', account.name);
       if (limit && !dryRun) {
         blocked.push(
           `${account.title}: резолв @ников заблокирован ещё ${limit.human} — не отправляю`,
+        );
+        continue;
+      }
+
+      // Свежий PEER_FLOOD: аккаунт отдыхает, остальные работают. Раньше
+      // «остановиться» значило остановить всё — с одним аккаунтом иначе и
+      // не бывало, — и следующий запуск первым делом тыкал зажатого.
+      const flood = floods.get(account.name);
+      const restUntil = flood ? flood.getTime() + cooldownMs : 0;
+      if (restUntil > Date.now() && !dryRun) {
+        const leftMin = Math.ceil((restUntil - Date.now()) / 60_000);
+        blocked.push(
+          `${account.title}: PEER_FLOOD ${formatClock(flood as Date)}, ` +
+            `отдыхает ещё ${leftMin} мин`,
         );
         continue;
       }
@@ -586,6 +602,12 @@ function isFatal(err: unknown): boolean {
   if (err instanceof FloodWaitError) return err.seconds > 300;
   const message = describeError(err).toUpperCase();
   return FATAL_ERRORS.some((code) => message.includes(code));
+}
+
+/** Часы:минуты по местному времени — для строки «PEER_FLOOD в 14:41». */
+function formatClock(at: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
 function describeError(err: unknown): string {

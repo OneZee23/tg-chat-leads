@@ -99,6 +99,27 @@ export class SendAttemptService {
     };
   }
 
+  /**
+   * Когда каждый аккаунт последний раз ловил PEER_FLOOD.
+   *
+   * Читаем из журнала, а не держим в памяти: процесс перезапускают по
+   * несколько раз в день, и после рестарта забытое ограничение означало бы
+   * «сразу ткнуть зажатый аккаунт ещё раз».
+   */
+  public async lastPeerFlood(): Promise<Map<string, Date>> {
+    const rows: Array<{ account: string; at: Date }> = await this.repo.query(
+      `
+      SELECT account, max(started_at) AS at
+      FROM tg_send_attempt
+      WHERE result = 'failed'
+        AND error ILIKE '%PEER_FLOOD%'
+        AND started_at > now() - interval '24 hours'
+      GROUP BY account
+      `,
+    );
+    return new Map(rows.map((row) => [row.account, new Date(row.at)]));
+  }
+
   /** Незакрытые попытки: отправка началась, исход неизвестен. */
   public async listUnfinished(): Promise<SendAttemptEntity[]> {
     return this.repo.find({
