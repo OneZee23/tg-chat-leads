@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
+import bigInt from 'big-integer';
 import { Api } from 'telegram';
 import { sleep, sleepJitter } from '@common/utils/sleep';
 import { DialogsConfig } from '@modules/dialogs/dialogs.config';
 import { detectReview } from '@modules/dialogs/review-detect';
 import { HistoryMessage, sliceUnanswered } from '@modules/dialogs/unanswered';
-import { LeadService } from '@modules/lead/lead.service';
+import { DialogCandidate, LeadService } from '@modules/lead/lead.service';
 import { InboxDialog, InboxDump, InboxMessage } from '@modules/outreach/inbox.format';
 import { OutboxSendEntry, OutboxSendResult } from '@modules/outreach/outbox.format';
 import { OutboxEntry } from '@modules/outreach/outbox.parse';
@@ -77,6 +78,15 @@ export interface ContactedSyncResult {
   deepChecks: number;
 }
 
+/**
+ * Сколько людей добираем напрямую за один прогон.
+ *
+ * Каждый — запрос к Telegram с паузой, то есть минуты. Потолок нужен, чтобы
+ * «посмотреть инбокс» не превращалось в получасовое ожидание: хвост
+ * разбирается за несколько прогонов, а разобранные больше не возвращаются.
+ */
+const UNSEEN_DEEP_MAX = 150;
+
 @Injectable()
 export class DialogsService {
   private readonly logger = new Logger(DialogsService.name);
@@ -136,6 +146,85 @@ export class DialogsService {
         }
       }
     }
+  }
+
+  /**
+   * История одного человека → запись выгрузки. null — отвечать нечего.
+   *
+   * Общий кусок двух проходов: обхода по списку диалогов и добора тех, кого
+   * список не отдал. Оба обязаны разбирать переписку одинаково — иначе
+   * человек попадал бы в выгрузку по-разному в зависимости от того, каким
+   * путём мы до него добрались.
+   */
+  private async inspectDialog(
+    account: TelegramAccount,
+    entity: Api.User,
+    candidate: DialogCandidate,
+  ): Promise<InboxDialog | null> {
+    let messages;
+    try {
+      messages = await account.client.getMessages(entity, {
+        limit: this.config.deepLimit,
+      });
+      await sleep(this.config.deepDelayMs);
+    } catch (err) {
+      // Историю не прочитали — в выгрузку не кладём: писать ответ вслепую
+      // хуже, чем не ответить сейчас и увидеть человека в следующий раз.
+      this.logger.warn(
+        `Выгрузка: id${candidate.tgUserId} — история недоступна: ${describeError(err)}`,
+      );
+      return null;
+    }
+
+    const slice = sliceUnanswered(toHistory(messages), cursorFloorSec(candidate));
+    if (slice.incoming.length === 0) return null;
+
+    const newest = slice.incoming[slice.incoming.length - 1];
+    const decision = autoReplyDecision(newest.message);
+
+    // Set по ссылкам, а не повторение предиката sliceUnanswered: incoming
+    // собран как history.filter(...), объекты те же самые, поэтому
+    // членство проверяется точно и не может разъехаться с курсором.
+    const isFresh = new Set(slice.incoming);
+
+    return {
+      tgUserId: candidate.tgUserId,
+      username: entity.username ?? null,
+      // Кто ведёт переписку. В файле это видно человеку, а обратный прогон
+      // outbox по этому полю выбирает, с какого аккаунта отвечать.
+      account: account.name,
+      accountTitle: account.title,
+      hook: buildHook(candidate.sampleText),
+      about: candidate.sampleText,
+      heuristic: {
+        kind: decision.kind,
+        action: decision.action,
+        reason: decision.reason,
+      },
+      history: slice.history
+        // Сообщения без текста — наши скриншоты из рассылки и чужие
+        // стикеры. Отвечать на них не на что, а в файле они рисовались
+        // пустыми блоками по семь подряд перед каждым письмом.
+        //
+        // Фильтруем ТОЛЬКО здесь, при рендере. Убрать их раньше, до
+        // sliceUnanswered, — значит потерять наше фото как «последнее наше
+        // сообщение»: курсор откатится назад, и уже отвеченный диалог
+        // всплывёт в следующей выгрузке заново.
+        .filter((m) => m.message.trim().length > 0)
+        .map((m): InboxMessage => ({
+          out: m.out,
+          at: formatStamp(new Date(m.date * 1000)),
+          text: m.message,
+          fresh: isFresh.has(m),
+        })),
+    };
+  }
+
+  /** Аккаунт, который ведёт этого человека. Без закрепления — основной. */
+  private accountFor(assigned: string | null): TelegramAccount | null {
+    const all = this.accounts.list();
+    if (assigned) return all.find((a) => a.name === assigned) ?? null;
+    return all[0] ?? null;
   }
 
   /**
@@ -576,6 +665,8 @@ export class DialogsService {
       dialogsSeen: 0,
       candidatesTotal: candidates.size,
       candidatesUnseen: 0,
+      unseenChecked: 0,
+      unseenUnreachable: 0,
       dialogsIterated: 0,
       dialogsLimit: this.config.limit,
       unseen: [],
@@ -627,72 +718,13 @@ export class DialogsService {
       if (!last || last.out !== false) continue;
       if (messageText(last).length === 0) continue;
 
-      let messages;
-      try {
-        messages = await account.client.getMessages(entity, {
-          limit: this.config.deepLimit,
-        });
-        await sleep(this.config.deepDelayMs);
-      } catch (err) {
-        // Историю не прочитали — в выгрузку не кладём: писать ответ вслепую
-        // хуже, чем не ответить сейчас и увидеть человека в следующий раз.
-        this.logger.warn(
-          `Выгрузка: id${candidate.tgUserId} — история недоступна: ${describeError(err)}`,
-        );
-        continue;
-      }
-
-      const slice = sliceUnanswered(toHistory(messages), cursorFloorSec(candidate));
-
-      if (slice.incoming.length === 0) continue;
-
-      const newest = slice.incoming[slice.incoming.length - 1];
-      const decision = autoReplyDecision(newest.message);
-
-      // Set по ссылкам, а не повторение предиката sliceUnanswered: incoming
-      // собран как history.filter(...), объекты те же самые, поэтому
-      // членство проверяется точно и не может разъехаться с курсором.
-      const isFresh = new Set(slice.incoming);
-
-      const entry: InboxDialog = {
-        tgUserId: candidate.tgUserId,
-        username: entity.username ?? null,
-        // Кто ведёт переписку. В файле это видно человеку, а обратный
-        // прогон outbox по этому полю выбирает, с какого аккаунта отвечать.
-        account: account.name,
-        accountTitle: account.title,
-        hook: buildHook(candidate.sampleText),
-        about: candidate.sampleText,
-        heuristic: {
-          kind: decision.kind,
-          action: decision.action,
-          reason: decision.reason,
-        },
-        history: slice.history
-          // Сообщения без текста — наши скриншоты из рассылки и чужие
-          // стикеры. Отвечать на них не на что, а в файле они рисовались
-          // пустыми блоками по семь подряд перед каждым письмом.
-          //
-          // Фильтруем ТОЛЬКО здесь, при рендере. Убрать их раньше, до
-          // sliceUnanswered, — значит потерять наше фото как «последнее
-          // наше сообщение»: курсор откатится назад, и уже отвеченный
-          // диалог всплывёт в следующей выгрузке заново.
-          .filter((m) => m.message.trim().length > 0)
-          .map((m): InboxMessage => ({
-            out: m.out,
-            at: formatStamp(new Date(m.date * 1000)),
-            text: m.message,
-            fresh: isFresh.has(m),
-          })),
-      };
-
-      // Эвристика уверена, что ответа не требует, — в отдельный блок, чтобы
-      // не тратить внимание на пятьдесят «ок».
-      if (decision.action === 'clear') {
-        dump.trivial.push(entry);
-      } else {
-        dump.dialogs.push(entry);
-        countFor(account).needReply += 1;
+      const entry = await this.inspectDialog(account, entity, candidate);
+      if (entry) {
+        if (entry.heuristic.action === 'clear') dump.trivial.push(entry);
+        else {
+          dump.dialogs.push(entry);
+          countFor(account).needReply += 1;
+        }
       }
     }
 
@@ -707,6 +739,53 @@ export class DialogsService {
           needReply: 0,
         },
     );
+
+    // ── Хвост: кандидаты, которых обход по диалогам не увидел ──
+    //
+    // Список диалогов у Telegram не полон, и это измеренный факт, а не
+    // предположение: 15.09.2026 обход стабильно терял около пятой части
+    // каждой пачки отправок — равномерно по всем дням, а не в один
+    // инцидент. Поэтому людям, которых список не отдал, мы стучимся
+    // напрямую: у нас есть их id, а сессия помнит, кому мы писали.
+    //
+    // Это дороже (запрос на человека), поэтому только для хвоста и с тем
+    // же джиттером, что и везде.
+    const missed = [...candidates.values()].filter((c) => !seen.has(c.tgUserId));
+    for (const candidate of missed.slice(0, UNSEEN_DEEP_MAX)) {
+      if (dump.dialogs.length + dump.trivial.length >= limit) break;
+
+      const account = this.accountFor(candidate.assignedAccount);
+      if (!account) continue;
+
+      let entity: Api.User;
+      try {
+        const resolved = await account.client.getEntity(bigInt(candidate.tgUserId));
+        if (!(resolved instanceof Api.User)) continue;
+        entity = resolved;
+      } catch (err) {
+        // Сессия про этого человека не помнит — resolve по нику стоил бы
+        // лимита на ResolveUsername, а его мы бережём для рассылки.
+        dump.unseenUnreachable += 1;
+        this.logger.warn(
+          `Хвост: id${candidate.tgUserId} не открылся: ${describeError(err)}`,
+        );
+        continue;
+      }
+
+      dump.unseenChecked += 1;
+      seen.add(candidate.tgUserId);
+
+      const entry = await this.inspectDialog(account, entity, candidate);
+      if (entry) {
+        countFor(account).seen += 1;
+        dump.dialogsSeen += 1;
+        if (entry.heuristic.action === 'clear') dump.trivial.push(entry);
+        else {
+          dump.dialogs.push(entry);
+          countFor(account).needReply += 1;
+        }
+      }
+    }
 
     dump.candidatesUnseen = dump.candidatesTotal - seen.size;
     for (const [id, c] of candidates) {

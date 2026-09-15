@@ -681,3 +681,44 @@ describe('архив', () => {
     expect(dump.dialogs.map((d) => d.tgUserId)).toEqual(['42']);
   });
 });
+
+describe('добор тех, кого не отдал список диалогов', () => {
+  it('человек без диалога в списке всё равно попадает в выгрузку', async () => {
+    // Список диалогов у Telegram неполон: 15.09.2026 обход стабильно терял
+    // около пятой части каждой пачки отправок. Поэтому по кандидатам, которых
+    // список не отдал, стучимся напрямую по id.
+    const { service, client } = makeService({
+      dialogs: [],
+      messages: [
+        { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
+        { out: false, date: DUMPED_AT, message: 'а сколько стоит?' },
+      ],
+      candidates: new Map([candidate('77')]),
+    });
+    (client as unknown as { getEntity: jest.Mock }).getEntity = jest.fn(async () =>
+      user('77', 'lost'),
+    );
+
+    const dump = await service.collectUnanswered(10);
+
+    expect(dump.dialogs.map((d) => d.tgUserId)).toEqual(['77']);
+    expect(dump.unseenChecked).toBe(1);
+    expect(dump.candidatesUnseen).toBe(0);
+  });
+
+  it('кого не смогли открыть — честно остаётся в ненайденных', async () => {
+    const { service, client } = makeService({
+      dialogs: [],
+      candidates: new Map([candidate('88')]),
+    });
+    (client as unknown as { getEntity: jest.Mock }).getEntity = jest.fn(async () => {
+      throw new Error('нет в кеше сессии');
+    });
+
+    const dump = await service.collectUnanswered(10);
+
+    expect(dump.unseenUnreachable).toBe(1);
+    expect(dump.candidatesUnseen).toBe(1);
+    expect(dump.unseen.map((u) => u.tgUserId)).toEqual(['88']);
+  });
+});
