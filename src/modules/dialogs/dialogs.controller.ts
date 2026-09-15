@@ -40,6 +40,20 @@ export class DialogsController {
   }
 
   /**
+   * Погасить счётчик непрочитанных там, где мы уже ответили:
+   * `curl -XPOST .../dialogs/mark-read`.
+   */
+  @Post('dialogs/mark-read')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public async markRead(): Promise<string> {
+    const { marked, left } = await this.dialogs.markAnsweredRead();
+    return (
+      `\nПогашено непрочитанных там, где мы уже ответили: ${marked}.\n` +
+      `Осталось с кружком: ${left} — это те, где последним написал человек.\n`
+    );
+  }
+
+  /**
    * Разовая диагностика списка диалогов: `curl -XPOST .../dialogs/dump`.
    * Пишет CSV в export/ — он в gitignore, там ники живых людей.
    */

@@ -78,6 +78,9 @@ function makeService(
     sendMessage: jest.fn<Promise<void>, [unknown, Record<string, unknown>]>(
       async () => undefined,
     ),
+    // После ответа чат помечается прочитанным: иначе синий кружок висит
+    // вечно, потому что отправка через API его не гасит.
+    markAsRead: jest.fn(async () => true),
   };
   const leads = {
     getDialogCandidates: jest.fn(async () => over.candidates ?? new Map()),
@@ -497,6 +500,7 @@ function makeTwoAccounts(over: {
     sendMessage: jest.fn<Promise<void>, [unknown, Record<string, unknown>]>(
       async () => undefined,
     ),
+    markAsRead: jest.fn(async () => true),
   });
 
   const main = makeClient(over.mainDialogs ?? [], over.mainMessages ?? []);
@@ -748,5 +752,54 @@ describe('узнавание по @нику', () => {
 
     const dump = await service.collectUnanswered(10);
     expect(dump.dialogs.map((d) => d.tgUserId)).toEqual(['7']);
+  });
+});
+
+describe('счётчик непрочитанных', () => {
+  it('после ответа чат помечается прочитанным', async () => {
+    // Отправка через API сама по себе кружок не гасит, и он висит на тех,
+    // кому мы давно ответили. Счётчик перестаёт что-либо значить.
+    const { service, client } = makeService({
+      dialogs: [dialog('1', 'nick')],
+      messages: FRESH_HISTORY,
+      candidates: new Map([candidate('1')]),
+    });
+
+    await service.sendPreparedReplies([entry()], options());
+
+    expect(client.markAsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it('гасим кружок только там, где последнее слово наше', async () => {
+    const { service, client } = makeService({
+      dialogs: [
+        // Мы ответили последними — гасим.
+        {
+          isUser: true,
+          entity: user('1', 'answered'),
+          unreadCount: 3,
+          message: { out: true, date: 1, message: 'наш ответ' },
+        },
+        // Последним написал человек — кружок остаётся, это настоящий долг.
+        {
+          isUser: true,
+          entity: user('2', 'waiting'),
+          unreadCount: 1,
+          message: { out: false, date: 2, message: 'вопрос' },
+        },
+        // Без непрочитанных трогать нечего.
+        {
+          isUser: true,
+          entity: user('3', 'clean'),
+          unreadCount: 0,
+          message: { out: true, date: 3, message: 'ок' },
+        },
+      ],
+    });
+
+    const result = await service.markAnsweredRead();
+
+    expect(result).toEqual({ marked: 1, left: 1 });
+    expect(client.markAsRead).toHaveBeenCalledTimes(1);
   });
 });

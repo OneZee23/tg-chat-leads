@@ -262,6 +262,53 @@ export class DialogsService {
   }
 
   /**
+   * Погасить счётчик непрочитанных там, где мы уже ответили.
+   *
+   * Отправка через API не помечает чат прочитанным, поэтому синий кружок
+   * висит и на тех, кому мы давно ответили. Счётчик в телеграме перестаёт
+   * что-либо значить, а человек по привычке читает его как «столько людей
+   * ждут ответа» — и не верит инбоксу, который говорит другое.
+   *
+   * Помечаем ТОЛЬКО те диалоги, где последнее сообщение наше. Там, где
+   * последним написал человек, кружок остаётся: это и есть настоящий долг,
+   * и гасить его, не ответив, значит врать себе же. Плюс уважение к
+   * собеседнику: «прочитано» без ответа — это сообщение само по себе.
+   */
+  public async markAnsweredRead(): Promise<{ marked: number; left: number }> {
+    const result = { marked: 0, left: 0 };
+
+    for (const account of this.accounts.list()) {
+      for (const archived of [false, true]) {
+        for await (const dialog of account.client.iterDialogs({
+          limit: this.config.limit,
+          archived,
+        })) {
+          if (!dialog.isUser || dialog.unreadCount === 0) continue;
+
+          const last = dialog.message;
+          if (!last || last.out !== true) {
+            result.left += 1;
+            continue;
+          }
+
+          try {
+            await account.client.markAsRead(dialog.entity as Api.User);
+            result.marked += 1;
+            await sleep(this.config.deepDelayMs);
+          } catch (err) {
+            this.logger.warn(`Не пометил прочитанным: ${describeError(err)}`);
+          }
+        }
+      }
+    }
+
+    this.logger.log(
+      `Счётчик непрочитанных: погашено ${result.marked}, осталось ждущих ответа ${result.left}`,
+    );
+    return result;
+  }
+
+  /**
    * Разовая диагностика: выписать всё как есть, без единой догадки.
    *
    * Появилась 15.09.2026, когда три гипотезы подряд не подтвердились: обход
@@ -1227,6 +1274,16 @@ export class DialogsService {
         result.stoppedBecause = `ошибка отправки: ${message}`;
         break;
       }
+
+      // Чат прочитан — мы только что на него ответили. Без этого синий
+      // кружок висит вечно: отправка через API сама по себе не помечает
+      // диалог прочитанным, и счётчик непрочитанных перестаёт что-либо
+      // значить. Ошибку глотаем: пометка — удобство, а не часть отправки.
+      await account.client
+        .markAsRead(dialogEntity)
+        .catch((err) =>
+          this.logger.warn(`Не пометил прочитанным: ${describeError(err)}`),
+        );
 
       // Сообщение УШЛО. markAnswered отдельно: его сбой не имеет права выдать
       // отправленное за провал. Даже если пометка не пройдёт, следующая
