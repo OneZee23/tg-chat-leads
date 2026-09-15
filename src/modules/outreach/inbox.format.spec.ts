@@ -144,9 +144,10 @@ describe('предупреждение о неосмотренных', () => {
       }),
       'inbox/x.md',
     );
-    expect(out).toContain('НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: 190');
+    expect(out).toContain('ПЕРЕПИСКА ИСЧЕЗЛА У 190');
     expect(out).toContain('912 из 1102');
-    // Обход упёрся ровно в лимит — вот тут совет поднять его уместен.
+    // Обход упёрся ровно в лимит: пока это так, цифре верить нельзя, и об
+    // этом сказано раньше вывода про спам.
     expect(out).toContain('DIALOGS_LIMIT');
   });
 
@@ -165,10 +166,11 @@ describe('предупреждение о неосмотренных', () => {
       }),
       'inbox/x.md',
     );
-    expect(out).toContain('НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: 233');
-    expect(out).toContain('1141 диалогов из 5000');
+    expect(out).toContain('ПЕРЕПИСКА ИСЧЕЗЛА У 233');
     expect(out).not.toContain('DIALOGS_LIMIT');
-    expect(out).toContain('диалоги у аккаунтов закончились раньше');
+    // 233 из 1192 — это доля, а не сбой обхода: столько людей нас стёрли.
+    expect(out).toContain('20%');
+    expect(out).toContain('Сообщить о спаме');
   });
 });
 
@@ -183,13 +185,13 @@ describe('список ненайденных в конце файла', () => {
         ],
       }),
     );
-    expect(out).toContain('# Не найдены среди диалогов — 2');
+    expect(out).toContain('# Переписка исчезла — 2');
     expect(out.indexOf('id1')).toBeLessThan(out.indexOf('@late'));
     expect(out).toContain('написано 2026-08-10');
   });
 
   it('без ненайденных секции нет', () => {
-    expect(formatInbox(dump())).not.toContain('Не найдены среди диалогов');
+    expect(formatInbox(dump())).not.toContain('Переписка исчезла');
   });
 });
 
@@ -230,7 +232,8 @@ describe('formatInboxSummary: два аккаунта', () => {
       'inbox/file.md',
     );
 
-    expect(out).toContain('600 диалогов из 1000 возможных');
-    expect(out).not.toContain('подними DIALOGS_LIMIT');
+    // Потолок на две лички — 1000, прошли 600: в лимит не упёрлись, и
+    // предупреждения про него быть не должно.
+    expect(out).not.toContain('DIALOGS_LIMIT');
   });
 });
