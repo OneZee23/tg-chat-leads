@@ -35,6 +35,17 @@ class RunSendDto {
   )
   @IsBoolean()
   public readonly send?: boolean;
+
+  /**
+   * Слать сразу всеми аккаунтами, каждым по своей очереди.
+   *
+   * По умолчанию выключено: обычный порядок отдаёт лида тому, кто за сутки
+   * написал меньше, и бережёт аккаунты. Здесь владелец говорит «мне нужна
+   * скорость» — и получает её вместе с риском, который на него и ложится.
+   */
+  @IsOptional()
+  @IsBoolean()
+  public readonly parallel?: boolean;
 }
 
 class RecentQueryDto {
@@ -65,7 +76,9 @@ export class SenderController {
   @Post('run')
   @Header('Content-Type', 'text/plain; charset=utf-8')
   public async run(@Body() body: RunSendDto): Promise<string> {
-    const report = await this.sender.run(body.limit, body.send !== true);
+    const report = await this.sender.run(body.limit, body.send !== true, {
+      parallel: body.parallel === true,
+    });
     return formatSendReport(report);
   }
 

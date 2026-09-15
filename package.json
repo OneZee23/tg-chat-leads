@@ -32,6 +32,7 @@
     "help": "curl -sS 'http://127.0.0.1:3010/send/help'",
     "send": "sh scripts/send.sh",
     "send:go": "sh scripts/send.sh --go",
+    "send:go:both": "sh scripts/send.sh --go --both",
     "send:release": "curl -sS -XPOST 'http://127.0.0.1:3010/send/release-stuck'",
     "wrote": "sh scripts/mark.sh contacted",
     "skip": "sh scripts/mark.sh skip",

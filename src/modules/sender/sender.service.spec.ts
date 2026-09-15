@@ -270,3 +270,60 @@ describe('SenderService: выбор аккаунта', () => {
     expect(leads.claimForSending).not.toHaveBeenCalled();
   });
 });
+
+describe('SenderService: одновременная отправка обоими', () => {
+  it('делит очередь между аккаунтами, а не отдаёт всё одному', async () => {
+    // Обычный порядок отдал бы всех четверых основному: у второго за сутки
+    // уже 44. Владельцу нужна скорость — тогда очередь делится по кругу.
+    const { service, clients } = makeSender({
+      leads: [lead('1', 'a'), lead('2', 'b'), lead('3', 'c'), lead('4', 'd')],
+      used: { main: 10, second: 44 },
+    });
+
+    const report = await service.run(undefined, false, { parallel: true });
+
+    expect(report.sent).toBe(4);
+    expect(sentBy(clients)).toEqual({ main: 2, second: 2 });
+  });
+
+  it('закреплённый аккаунт сильнее раздачи по кругу', async () => {
+    const { service, clients } = makeSender({
+      leads: [lead('1', 'a', 'second'), lead('2', 'b', 'second')],
+    });
+
+    await service.run(undefined, false, { parallel: true });
+
+    expect(sentBy(clients)).toEqual({ main: 0, second: 2 });
+  });
+
+  it('ограничение одного аккаунта не останавливает второй', async () => {
+    // Раньше PEER_FLOOD у одного ронял весь прогон, и второй простаивал
+    // из-за чужого лимита — ровно то, ради чего его и заводили.
+    const { service, clients, leads } = makeSender({
+      leads: [lead('1', 'a'), lead('2', 'b'), lead('3', 'c'), lead('4', 'd')],
+    });
+    clients.get('main')!.sendMessage.mockRejectedValue(new Error('400: PEER_FLOOD'));
+
+    const report = await service.run(undefined, false, { parallel: true });
+
+    expect(sentBy(clients).second).toBe(2);
+    expect(report.failed).toBeGreaterThan(0);
+    // Прогон не считается фатальным: один аккаунт дошёл до конца.
+    expect(report.fatal).toBe(false);
+    // Хвост выбывшего вернулся в очередь, а не пропал.
+    expect(leads.releaseToQueue).toHaveBeenCalled();
+  });
+
+  it('оба упали — вот это фатально', async () => {
+    const { service, clients } = makeSender({
+      leads: [lead('1', 'a'), lead('2', 'b')],
+    });
+    clients.get('main')!.sendMessage.mockRejectedValue(new Error('400: PEER_FLOOD'));
+    clients.get('second')!.sendMessage.mockRejectedValue(new Error('400: PEER_FLOOD'));
+
+    const report = await service.run(undefined, false, { parallel: true });
+
+    expect(report.sent).toBe(0);
+    expect(report.fatal).toBe(true);
+  });
+});

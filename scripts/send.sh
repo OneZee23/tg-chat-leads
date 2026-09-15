@@ -5,6 +5,8 @@
 #   yarn send 5            — предпросмотр первых пяти
 #   yarn send:go           — отправить, спросит подтверждение
 #   yarn send:go 5 --yes   — отправить пять без вопроса
+#   yarn send:go 40 --both — слать сразу обоими аккаунтами, каждым по своей
+#                            очереди и в своём темпе
 #
 # Почему спрашиваем подтверждение, хотя больше нигде не спрашиваем: рассылка
 # незнакомым людям — единственное действие в инструменте, которое нельзя
@@ -13,12 +15,14 @@
 
 GO=""
 YES=""
+BOTH=""
 LIMIT=""
 
 for arg in "$@"; do
   case "$arg" in
     --go) GO="yes" ;;
     --yes) YES="yes" ;;
+    --both) BOTH="yes" ;;
     *) LIMIT="$arg" ;;
   esac
 done
@@ -54,10 +58,16 @@ else
   SEND_FIELD='"send":false'
 fi
 
-if [ -n "$LIMIT" ]; then
-  BODY="{\"limit\":$LIMIT,$SEND_FIELD}"
+if [ -n "$BOTH" ]; then
+  PARALLEL_FIELD=',"parallel":true'
 else
-  BODY="{$SEND_FIELD}"
+  PARALLEL_FIELD=""
+fi
+
+if [ -n "$LIMIT" ]; then
+  BODY="{\"limit\":$LIMIT,$SEND_FIELD$PARALLEL_FIELD}"
+else
+  BODY="{$SEND_FIELD$PARALLEL_FIELD}"
 fi
 
 HOST="${LEADGEN_HOST:-http://127.0.0.1:3010}"

@@ -25,6 +25,8 @@ import {
 
 export interface SendAccountReport {
   name: string;
+  /** Чем этот аккаунт кончил прогон. null — работал до конца. */
+  stopped?: string | null;
   /** @ник аккаунта — «main» человеку ни о чём не говорит. */
   title: string;
   /** Отправлено этим запуском. */
@@ -62,6 +64,8 @@ interface AccountRun {
   account: TelegramAccount;
   budget: DailyBudget;
   sentNow: number;
+  /** Ограничение Telegram, из-за которого аккаунт выбыл посреди прогона. */
+  stopped?: string;
 }
 
 /**
@@ -122,12 +126,13 @@ export class SenderService {
   public async run(
     limitOverride?: number,
     dryRunOverride?: boolean,
+    options: { parallel?: boolean } = {},
   ): Promise<SendReport> {
     if (this.running) throw new Error('Рассылка уже идёт');
     this.running = true;
 
     try {
-      return await this.execute(limitOverride, dryRunOverride);
+      return await this.execute(limitOverride, dryRunOverride, options);
     } finally {
       this.running = false;
     }
@@ -141,6 +146,7 @@ export class SenderService {
   private async execute(
     limitOverride?: number,
     dryRunOverride?: boolean,
+    options: { parallel?: boolean } = {},
   ): Promise<SendReport> {
     // Предпросмотр можно включить поверх конфига, но НЕ выключить им:
     // `SEND_DRY_RUN=true` остаётся жёстким запретом на отправку.
@@ -192,6 +198,14 @@ export class SenderService {
     const targets = dryRun
       ? (await this.leads.findForOutreach(limit)).items
       : await this.leads.claimForSending(limit);
+
+    // Одновременная отправка всеми аккаунтами: каждый идёт по своей
+    // очереди в своём темпе. Включается явно — по умолчанию порядок прежний,
+    // когда лид достаётся тому, кто написал меньше.
+    if (options.parallel && !dryRun && runs.length > 1) {
+      await this.sendInParallel(runs, targets, content, report);
+      return this.withFreshBudget(report, runs);
+    }
 
     let consecutiveErrors = 0;
 
@@ -293,13 +307,29 @@ export class SenderService {
         this.logger.warn(`Не отправлено @${lead.username}: ${outcome.error}`);
 
         if (outcome.fatal) {
-          report.stoppedBecause = `аккаунт ограничен (${run.account.title}): ${outcome.error}`;
-          report.fatal = true;
+          // Ограничение наступило У ЭТОГО аккаунта — он выбывает, остальные
+          // продолжают. Раньше здесь останавливался весь прогон, и второй
+          // аккаунт простаивал из-за чужого лимита: ради этого его и заводили.
+          const benched = `${run.account.title}: ${outcome.error}`;
+          run.stopped = outcome.error;
+          runs.splice(runs.indexOf(run), 1);
+
           // Ограничение уже наступило — сбрасываем кеш статуса, чтобы
           // следующий запуск спросил @SpamBot, а не поверил старому «ок».
           await this.account.status(true).catch(() => undefined);
-          await this.releaseRest(targets, index + 1);
-          break;
+
+          if (runs.length === 0) {
+            report.stoppedBecause = `аккаунт ограничен (${benched})`;
+            report.fatal = true;
+            await this.releaseRest(targets, index + 1);
+            break;
+          }
+
+          this.logger.warn(`${benched} — выбывает, продолжаю остальными`);
+          // Этому лиду не отправили, но он уже помечен failed внутри
+          // deliver: возвращать его в очередь здесь нельзя, иначе получит
+          // второе письмо, когда аккаунт отойдёт.
+          continue;
         }
         if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
           report.stoppedBecause = `${consecutiveErrors} ошибки подряд — останавливаюсь`;
@@ -321,6 +351,138 @@ export class SenderService {
     }
 
     return this.withFreshBudget(report, runs);
+  }
+
+  /**
+   * Отправка сразу всеми аккаунтами, каждый по своей очереди.
+   *
+   * Обычный порядок отдаёт лида тому, кто за сутки написал меньше, и это
+   * верно, когда важнее беречь аккаунты. Но если один из них уже близко к
+   * потолку, весь прогон уходит с другого — а владелец хотел, чтобы работали
+   * оба. Здесь очередь просто делится по кругу, и каждый аккаунт идёт своим
+   * темпом параллельно остальным.
+   *
+   * Закреплённый за человеком аккаунт сильнее раздачи по кругу: писать
+   * фоллоу-ап другим номером нельзя, даже ради скорости.
+   */
+  private async sendInParallel(
+    runs: AccountRun[],
+    targets: LeadEntity[],
+    content: MessageContent,
+    report: SendReport,
+  ): Promise<void> {
+    const queues = new Map<string, LeadEntity[]>(runs.map((r) => [r.account.name, []]));
+    const orphans: LeadEntity[] = [];
+    let cursor = 0;
+
+    for (const lead of targets) {
+      const own = lead.assignedAccount
+        ? runs.find((r) => r.account.name === lead.assignedAccount)
+        : undefined;
+
+      if (lead.assignedAccount && !own) {
+        // Человека ведёт аккаунт, которого сейчас нет. Другим писать нельзя.
+        orphans.push(lead);
+        continue;
+      }
+
+      const run = own ?? runs[cursor++ % runs.length];
+      queues.get(run.account.name)?.push(lead);
+    }
+
+    for (const lead of orphans) {
+      report.attempted += 1;
+      report.skipped += 1;
+      report.entries.push({
+        username: lead.username,
+        result: 'skipped',
+        error: describePickFailure('assigned_missing'),
+      });
+      await this.leads.releaseToQueue([lead.id]);
+    }
+
+    await Promise.all(
+      runs.map((run) =>
+        this.drainQueue(run, queues.get(run.account.name) ?? [], content, report),
+      ),
+    );
+
+    report.stoppedBecause = runs.some((r) => r.stopped)
+      ? `остановлены: ${runs
+          .filter((r) => r.stopped)
+          .map((r) => r.account.title)
+          .join(', ')}`
+      : 'очередь закончилась';
+    report.fatal = runs.every((r) => r.stopped);
+  }
+
+  /** Очередь одного аккаунта. Живёт своей жизнью, чужие сбои её не трогают. */
+  private async drainQueue(
+    run: AccountRun,
+    queue: LeadEntity[],
+    content: MessageContent,
+    report: SendReport,
+  ): Promise<void> {
+    let consecutiveErrors = 0;
+
+    for (const [index, lead] of queue.entries()) {
+      report.attempted += 1;
+
+      if (run.budget.remaining - run.sentNow <= 0) {
+        await this.leads.releaseToQueue(queue.slice(index).map((l) => l.id));
+        run.stopped = 'суточный потолок';
+        return;
+      }
+
+      if (!(await this.leads.isStillClaimed(lead.id))) {
+        report.skipped += 1;
+        report.entries.push({ username: lead.username, result: 'skipped' });
+        continue;
+      }
+
+      let outcome: { ok: boolean; error?: string; fatal?: boolean };
+      try {
+        outcome = await this.deliver(lead, content, run.account);
+      } catch (err) {
+        this.logger.error(`внутренняя ошибка: ${describeError(err)}`);
+        await this.leads.releaseToQueue(queue.slice(index).map((l) => l.id));
+        run.stopped = 'внутренняя ошибка';
+        return;
+      }
+
+      if (outcome.ok) {
+        report.sent += 1;
+        run.sentNow += 1;
+        consecutiveErrors = 0;
+        report.entries.push({
+          username: lead.username,
+          result: 'sent',
+          account: run.account.name,
+        });
+        this.logger.log(`Отправлено @${lead.username} с ${run.account.title}`);
+      } else {
+        report.failed += 1;
+        consecutiveErrors += 1;
+        report.entries.push({
+          username: lead.username,
+          result: 'failed',
+          account: run.account.name,
+          error: outcome.error,
+        });
+        this.logger.warn(`Не отправлено @${lead.username}: ${outcome.error}`);
+
+        if (outcome.fatal || consecutiveErrors >= this.config.maxConsecutiveErrors) {
+          run.stopped = outcome.error ?? `${consecutiveErrors} ошибки подряд`;
+          await this.account.status(true).catch(() => undefined);
+          // Хвост этой очереди возвращаем: его заберёт следующий прогон, в
+          // том числе другим аккаунтом, если этот будет отдыхать.
+          await this.leads.releaseToQueue(queue.slice(index + 1).map((l) => l.id));
+          return;
+        }
+      }
+
+      if (index < queue.length - 1) await sleepJitter(this.config.delaySec * 1000);
+    }
   }
 
   /**
@@ -410,6 +572,7 @@ export class SenderService {
   private accountReports(runs: AccountRun[]): SendAccountReport[] {
     return runs.map((run) => ({
       name: run.account.name,
+      stopped: run.stopped ?? null,
       title: run.account.title,
       sentNow: run.sentNow,
       used: run.budget.used + run.sentNow,
