@@ -66,7 +66,10 @@ function makeService(
   } = {},
 ) {
   const client = {
-    iterDialogs: jest.fn(async function* () {
+    // Архив — отдельный проход (`archived: true`), и в фикстуре он пуст:
+    // иначе те же диалоги вернулись бы дважды.
+    iterDialogs: jest.fn(async function* (params?: { archived?: boolean }) {
+      if (params?.archived) return;
       for (const d of over.dialogs ?? []) yield d;
     }),
     getMessages: jest.fn(async () => over.messages ?? []),
@@ -486,7 +489,8 @@ function makeTwoAccounts(over: {
     dialogs: unknown[],
     messages: Array<{ out: boolean; date: number; message: string }>,
   ) => ({
-    iterDialogs: jest.fn(async function* () {
+    iterDialogs: jest.fn(async function* (params?: { archived?: boolean }) {
+      if (params?.archived) return;
       for (const d of dialogs) yield d;
     }),
     getMessages: jest.fn(async () => messages),
@@ -631,5 +635,49 @@ describe('обход диалогов с двумя аккаунтами', () =>
     expect(result.sent).toBe(1);
     expect(main.sendMessage).toHaveBeenCalledTimes(1);
     expect(second.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('архив', () => {
+  it('обход заходит и в архив, а не только в основную папку', async () => {
+    // GramJS без явного archived отдаёт архив одной псевдозаписью и молча её
+    // пропускает. 15.09.2026 это стоило 200 человек, которым мы писали:
+    // Telegram сам уносит в архив чаты от неконтактов, а мы пишем именно им.
+    const { service, client } = makeService({ dialogs: [] });
+    await service.collectUnanswered(10);
+
+    const folders = client.iterDialogs.mock.calls.map(
+      (call) => (call[0] as { archived?: boolean } | undefined)?.archived,
+    );
+    expect(folders).toEqual([false, true]);
+  });
+
+  it('человек из архива попадает в выгрузку', async () => {
+    const archived = dialogWithLast('42', 'hidden', {
+      out: false,
+      date: DUMPED_AT,
+      message: 'а сколько стоит?',
+    });
+    const { service } = makeService({
+      messages: [
+        { out: true, date: DUMPED_AT - 3600, message: 'наше письмо' },
+        { out: false, date: DUMPED_AT, message: 'а сколько стоит?' },
+      ],
+      candidates: new Map([candidate('42')]),
+    });
+    // Мок отдаёт диалог только на проходе по архиву.
+    const client = (
+      service as unknown as {
+        accounts: { list: () => Array<{ client: { iterDialogs: jest.Mock } }> };
+      }
+    ).accounts.list()[0].client;
+    client.iterDialogs.mockImplementation(async function* (params?: {
+      archived?: boolean;
+    }) {
+      if (params?.archived) yield archived;
+    });
+
+    const dump = await service.collectUnanswered(10);
+    expect(dump.dialogs.map((d) => d.tgUserId)).toEqual(['42']);
   });
 });

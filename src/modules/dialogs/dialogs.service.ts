@@ -105,18 +105,35 @@ export class DialogsService {
    * разрешение дублей ниже: человека, который есть в личке у обоих,
    * разбирает первый, а второй пропускает.
    *
-   * DIALOGS_LIMIT применяется к каждому аккаунту отдельно: это окно обхода
-   * «последние N диалогов», и у каждой лички оно своё.
+   * DIALOGS_LIMIT применяется к каждой папке каждого аккаунта отдельно: это
+   * окно обхода «последние N диалогов», и у каждой лички оно своё.
+   *
+   * АРХИВ ОБХОДИТСЯ ОТДЕЛЬНЫМ ПРОХОДОМ, и это главное здесь.
+   * `iterDialogs()` без `archived` возвращает архив ОДНОЙ псевдозаписью
+   * `DialogFolder`, а GramJS её пропускает (`client/dialogs.js`: «if (d
+   * instanceof Api.DialogFolder) continue»). То есть чаты внутри архива не
+   * перечисляются вовсе — при том, что документация обещает обратное.
+   *
+   * Цена ошибки измерена: 15.09.2026 в выгрузке оказалось 285 человек, чьих
+   * диалогов обход «не увидел». У 200 из них наше сообщение реально ушло,
+   * то есть чат существует. Туда их кладёт сам Telegram — настройка
+   * «архивировать новые чаты от неконтактов» ровно про наш случай: мы
+   * пишем незнакомым людям, и их ответы уезжают в архив мимо инбокса.
    */
   private async *eachDialog(): AsyncGenerator<{
     dialog: Awaited<ReturnType<TelegramAccount['client']['getDialogs']>>[number];
     account: TelegramAccount;
   }> {
     for (const account of this.accounts.list()) {
-      for await (const dialog of account.client.iterDialogs({
-        limit: this.config.limit,
-      })) {
-        yield { dialog, account };
+      // false — основная папка, true — архив. Именно двумя проходами:
+      // значение undefined архив молча пропускает.
+      for (const archived of [false, true]) {
+        for await (const dialog of account.client.iterDialogs({
+          limit: this.config.limit,
+          archived,
+        })) {
+          yield { dialog, account };
+        }
       }
     }
   }
