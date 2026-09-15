@@ -262,6 +262,89 @@ export class DialogsService {
   }
 
   /**
+   * Разовая диагностика: выписать всё как есть, без единой догадки.
+   *
+   * Появилась 15.09.2026, когда три гипотезы подряд не подтвердились: обход
+   * стабильно «не находил» 287 человек, которым мы писали, и ни архив, ни
+   * узнавание по нику этого не изменили. Дальше гадать дороже, чем один раз
+   * посмотреть на сырые данные.
+   *
+   * Отдаёт по каждому диалогу: аккаунт, папку, id, ник, тип и дату
+   * последнего сообщения. И отдельно — кандидатов, которых в списке не
+   * оказалось. Сопоставлять их дальше можно уже глазами и SQL.
+   */
+  public async dumpDialogs(): Promise<string> {
+    const candidates = await this.leads.getDialogCandidates();
+    const byUsername = new Map<string, string>();
+    for (const c of candidates.values()) {
+      const nick = c.username?.trim().toLowerCase();
+      if (nick) byUsername.set(nick, c.tgUserId);
+    }
+
+    const lines: string[] = [
+      'аккаунт;папка;id;ник;тип;последнее_сообщение;совпал_с_кандидатом',
+    ];
+    const seen = new Set<string>();
+    let total = 0;
+
+    for (const account of this.accounts.list()) {
+      for (const archived of [false, true]) {
+        for await (const dialog of account.client.iterDialogs({
+          limit: this.config.limit,
+          archived,
+        })) {
+          total += 1;
+          const entity = dialog.entity;
+          const isUser = entity instanceof Api.User;
+          const id = entity && 'id' in entity ? entity.id.toString() : '';
+          const nick =
+            entity && 'username' in entity ? ((entity.username as string) ?? '') : '';
+
+          const byId = candidates.get(id)?.tgUserId;
+          const byNick = nick ? byUsername.get(nick.toLowerCase()) : undefined;
+          const matched = byId ?? byNick ?? '';
+          if (matched) seen.add(matched);
+
+          const at = dialog.message?.date
+            ? new Date(dialog.message.date * 1000).toISOString().slice(0, 16)
+            : '';
+
+          lines.push(
+            [
+              account.name,
+              archived ? 'архив' : 'основная',
+              id,
+              nick,
+              isUser ? 'человек' : 'чат',
+              at,
+              matched,
+            ].join(';'),
+          );
+        }
+      }
+    }
+
+    lines.push('');
+    lines.push(
+      `# Диалогов всего: ${total}. Кандидатов: ${candidates.size}. Узнано: ${seen.size}.`,
+    );
+    lines.push('# Ниже — кандидаты, которых в списке диалогов не оказалось.');
+    lines.push('id;ник;когда_писали');
+    for (const c of candidates.values()) {
+      if (seen.has(c.tgUserId)) continue;
+      lines.push(
+        [
+          c.tgUserId,
+          c.username ?? '',
+          c.contactedAt?.toISOString().slice(0, 10) ?? '',
+        ].join(';'),
+      );
+    }
+
+    return lines.join('\n') + '\n';
+  }
+
+  /**
    * Помечает лидов, которым ты уже писал.
    *
    * Признак — наличие ТВОЕГО исходящего сообщения в личке с человеком.

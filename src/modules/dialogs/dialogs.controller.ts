@@ -1,4 +1,6 @@
-import { Controller, Get, Post, Query } from '@nestjs/common';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { Controller, Get, Header, Post, Query } from '@nestjs/common';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsOptional } from 'class-validator';
 import { DialogsService } from '@modules/dialogs/dialogs.service';
@@ -35,6 +37,24 @@ export class DialogsController {
       scanChatsLine: `SCAN_CHATS=${chats.map((c) => c.ref).join(',')}`,
       chats,
     };
+  }
+
+  /**
+   * Разовая диагностика списка диалогов: `curl -XPOST .../dialogs/dump`.
+   * Пишет CSV в export/ — он в gitignore, там ники живых людей.
+   */
+  @Post('dialogs/dump')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public async dumpDialogs(): Promise<string> {
+    const csv = await this.dialogs.dumpDialogs();
+    const dir = join(process.cwd(), 'export');
+    mkdirSync(dir, { recursive: true });
+    const path = join(
+      dir,
+      `dialogs-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`,
+    );
+    writeFileSync(path, csv, 'utf8');
+    return `\nДиалоги выписаны: ${path}\n`;
   }
 
   /**

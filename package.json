@@ -35,6 +35,7 @@
     "send:release": "curl -sS -XPOST 'http://127.0.0.1:3010/send/release-stuck'",
     "wrote": "sh scripts/mark.sh contacted",
     "skip": "sh scripts/mark.sh skip",
+    "dialogs:dump": "curl -sS --max-time 900 -XPOST 'http://127.0.0.1:3010/dialogs/dump'",
     "chats": "curl -sS 'http://127.0.0.1:3010/chats?withCounts=true'",
     "harvest": "ts-node -r dotenv/config scripts/harvest-tme.ts",
     "session:create": "ts-node -r dotenv/config scripts/create-tg-session.ts",
