@@ -43,6 +43,9 @@ export interface OutboxSendResult {
   entries: OutboxSendEntry[];
 }
 
+/** Директивы, которые правда уходят человеку в телеграм. */
+const SENDABLE = new Set<OutboxDirective>(['send', 'followup']);
+
 const LABEL_BY_RESULT: Record<OutboxEntryResult, string> = {
   preview: '', // будет переопределен в зависимости от directive
   sent: 'отправлено',
@@ -93,7 +96,14 @@ export function formatOutboxResult(result: OutboxSendResult): string {
     );
     // Варианты ответа печатаем прямо здесь: выбор делается из терминала, а
     // в файл человек лезет только чтобы вставить выбранное.
-    if (e.directive === 'ask' && e.body) {
+    //
+    // Тела ещё не отправленного печатаем целиком. Без них человек
+    // подтверждает отправку живым людям, видя только список ников, —
+    // а решает он как раз про текст. Условие именно на `preview`, а не на
+    // dryRun: у отправленного письма текст повторять незачем, оно ушло.
+    const showBody =
+      e.body && (e.directive === 'ask' || (e.result === 'preview' && SENDABLE.has(e.directive)));
+    if (showBody && e.body) {
       e.body.split(/\r?\n/).forEach((line) => lines.push(`      ${line}`));
       lines.push('');
     }

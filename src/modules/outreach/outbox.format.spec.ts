@@ -212,3 +212,56 @@ describe('formatOutboxResult', () => {
     expect(out).toContain('ты ответил руками');
   });
 });
+
+/**
+ * Текст в предпросмотре.
+ *
+ * Без него человек подтверждает отправку живым людям, видя только список
+ * ников, — а решает он как раз про текст. Владелец споткнулся об это
+ * прямо: «а как посмотреть что именно отправится?».
+ */
+describe('formatOutboxResult: тела сообщений', () => {
+  const withBodies = (over: Partial<OutboxSendResult> = {}) =>
+    result({
+      entries: [
+        { tgUserId: '1', username: 'a', directive: 'send', result: 'preview', body: 'Здравствуйте, это текст ответа.' },
+        { tgUserId: '2', username: 'b', directive: 'followup', result: 'preview', body: 'Пишу первым про цитату.' },
+        { tgUserId: '3', username: 'c', directive: 'close', result: 'preview' },
+        { tgUserId: '4', username: 'd', directive: 'ask', result: 'asked', body: 'Послушай голосовое.' },
+      ],
+      ...over,
+    });
+
+  it('предпросмотр печатает текст того, что уйдёт человеку', () => {
+    const out = formatOutboxResult(withBodies());
+    expect(out).toContain('Здравствуйте, это текст ответа.');
+    expect(out).toContain('Пишу первым про цитату.');
+  });
+
+  it('после боевого прогона тела не повторяются — сообщения уже ушли', () => {
+    const out = formatOutboxResult(
+      withBodies({
+        dryRun: false,
+        entries: [
+          { tgUserId: '1', username: 'a', directive: 'send', result: 'sent', body: 'Здравствуйте, это текст ответа.' },
+          { tgUserId: '2', username: 'b', directive: 'followup', result: 'sent', body: 'Пишу первым про цитату.' },
+          { tgUserId: '4', username: 'd', directive: 'ask', result: 'asked', body: 'Послушай голосовое.' },
+        ],
+      }),
+    );
+    expect(out).not.toContain('Здравствуйте, это текст ответа.');
+    expect(out).not.toContain('Пишу первым про цитату.');
+  });
+
+  it('ASK печатается всегда: из него автор выбирает вариант в терминале', () => {
+    expect(
+      formatOutboxResult(
+        withBodies({
+          dryRun: false,
+          entries: [{ tgUserId: '4', username: 'd', directive: 'ask', result: 'asked', body: 'Послушай голосовое.' }],
+        }),
+      ),
+    ).toContain('Послушай голосовое.');
+    expect(formatOutboxResult(withBodies())).toContain('Послушай голосовое.');
+  });
+});
