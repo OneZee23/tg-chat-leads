@@ -65,6 +65,21 @@ export interface DiscoveredChat {
   scanning: boolean;
 }
 
+/** Диалог, где последним написал человек: слово за нами. */
+export interface WaitingDialog {
+  account: string;
+  username: string | null;
+  tgUserId: string;
+  name: string;
+  at: Date;
+  text: string;
+  unread: number;
+  /** Когда мы закрыли разговор без ответа. null — не закрывали. */
+  closedAt: Date | null;
+  /** Есть ли он в базе лидов вообще. */
+  known: boolean;
+}
+
 export interface ContactedSyncResult {
   dialogsSeen: number;
   privateDialogs: number;
@@ -259,6 +274,59 @@ export class DialogsService {
 
     this.logger.log(`Найдено групп и каналов в диалогах: ${found.length}`);
     return found;
+  }
+
+  /**
+   * Кто ждёт ответа ПО ТЕЛЕГРАМУ, а не по нашей базе.
+   *
+   * Инбокс отвечает на вопрос «кому мы ещё не ответили по нашему учёту», и в
+   * нём есть решения, принятые раньше: закрытый директивой CLOSE человек
+   * больше не показывается никогда. Обычно это правильно — «спасибо, не
+   * интересно» отвечать нечем, — но решение о закрытии принимал ассистент, а
+   * проверять его должен человек.
+   *
+   * Здесь источник правды другой и предельно простой: последнее сообщение в
+   * диалоге — его, значит слово за нами. Ничего из нашей базы этот список не
+   * фильтрует; статус и дату закрытия он лишь ПОКАЗЫВАЕТ рядом, чтобы было
+   * видно, чем именно закончился разговор.
+   */
+  public async collectWaiting(): Promise<WaitingDialog[]> {
+    const candidates = await this.leads.getDialogCandidates();
+    const out: WaitingDialog[] = [];
+
+    for (const account of this.accounts.list()) {
+      for (const archived of [false, true]) {
+        for await (const dialog of account.client.iterDialogs({
+          limit: this.config.limit,
+          archived,
+        })) {
+          if (!dialog.isUser) continue;
+          const entity = dialog.entity;
+          if (!(entity instanceof Api.User)) continue;
+          if (entity.bot || entity.self) continue;
+
+          const last = dialog.message;
+          if (!last || last.out !== false) continue;
+
+          const candidate = candidates.get(entity.id.toString());
+          out.push({
+            account: account.title,
+            username: entity.username ?? null,
+            tgUserId: entity.id.toString(),
+            name: [entity.firstName, entity.lastName].filter(Boolean).join(' '),
+            at: new Date(last.date * 1000),
+            text: messageText(last),
+            unread: dialog.unreadCount,
+            closedAt: candidate?.closedAt ?? null,
+            known: Boolean(candidate),
+          });
+        }
+      }
+    }
+
+    out.sort((a, b) => b.at.getTime() - a.at.getTime());
+    this.logger.log(`Слово за нами в ${out.length} диалогах`);
+    return out;
   }
 
   /**

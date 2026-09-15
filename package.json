@@ -36,6 +36,7 @@
     "send:release": "curl -sS -XPOST 'http://127.0.0.1:3010/send/release-stuck'",
     "wrote": "sh scripts/mark.sh contacted",
     "skip": "sh scripts/mark.sh skip",
+    "waiting": "curl -sS --max-time 1800 -XPOST 'http://127.0.0.1:3010/dialogs/waiting'",
     "unread:fix": "curl -sS --max-time 1800 -XPOST 'http://127.0.0.1:3010/dialogs/mark-read'",
     "dialogs:dump": "curl -sS --max-time 900 -XPOST 'http://127.0.0.1:3010/dialogs/dump'",
     "chats": "curl -sS 'http://127.0.0.1:3010/chats?withCounts=true'",

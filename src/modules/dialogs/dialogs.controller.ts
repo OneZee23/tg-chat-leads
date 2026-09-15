@@ -4,6 +4,7 @@ import { Controller, Get, Header, Post, Query } from '@nestjs/common';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsOptional } from 'class-validator';
 import { DialogsService } from '@modules/dialogs/dialogs.service';
+import { formatWaiting } from '@modules/outreach/waiting.format';
 
 class ListChatsQueryDto {
   /**
@@ -37,6 +38,18 @@ export class DialogsController {
       scanChatsLine: `SCAN_CHATS=${chats.map((c) => c.ref).join(',')}`,
       chats,
     };
+  }
+
+  /**
+   * Кто ждёт ответа по телеграму: `curl -XPOST .../dialogs/waiting`.
+   *
+   * Список строится по состоянию диалогов, а не по нашему учёту: закрытые
+   * без ответа сюда попадают тоже, с пометкой когда и чем закончилось.
+   */
+  @Post('dialogs/waiting')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  public async waiting(): Promise<string> {
+    return formatWaiting(await this.dialogs.collectWaiting());
   }
 
   /**
