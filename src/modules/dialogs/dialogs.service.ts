@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import bigInt from 'big-integer';
 import { Api } from 'telegram';
 import { sleep, sleepJitter } from '@common/utils/sleep';
 import { DialogsConfig } from '@modules/dialogs/dialogs.config';
@@ -77,15 +76,6 @@ export interface ContactedSyncResult {
   repliedMarked: number;
   deepChecks: number;
 }
-
-/**
- * Сколько людей добираем напрямую за один прогон.
- *
- * Каждый — запрос к Telegram с паузой, то есть минуты. Потолок нужен, чтобы
- * «посмотреть инбокс» не превращалось в получасовое ожидание: хвост
- * разбирается за несколько прогонов, а разобранные больше не возвращаются.
- */
-const UNSEEN_DEEP_MAX = 150;
 
 @Injectable()
 export class DialogsService {
@@ -218,13 +208,6 @@ export class DialogsService {
           fresh: isFresh.has(m),
         })),
     };
-  }
-
-  /** Аккаунт, который ведёт этого человека. Без закрепления — основной. */
-  private accountFor(assigned: string | null): TelegramAccount | null {
-    const all = this.accounts.list();
-    if (assigned) return all.find((a) => a.name === assigned) ?? null;
-    return all[0] ?? null;
   }
 
   /**
@@ -665,8 +648,6 @@ export class DialogsService {
       dialogsSeen: 0,
       candidatesTotal: candidates.size,
       candidatesUnseen: 0,
-      unseenChecked: 0,
-      unseenUnreachable: 0,
       dialogsIterated: 0,
       dialogsLimit: this.config.limit,
       unseen: [],
@@ -695,6 +676,21 @@ export class DialogsService {
     // по последним диалогам аккаунта и старые в окно не попадают.
     const seen = new Set<string>();
 
+    // Второй ключ к тем же людям — @ник. Нужен потому, что id в базе мог
+    // устареть: рассылка открывает человека по НИКУ (`getEntity('@ник')`),
+    // а в базе лежит id, записанный сканером месяцем раньше. Между этими
+    // двумя моментами ник мог сменить владельца, а человек — аккаунт.
+    //
+    // Цена расхождения измерена 15.09.2026: обход прошёл 1430 диалогов и
+    // узнал в них 1209 кандидатов, а 287 «не нашёл» — при том что 200 из
+    // них наше сообщение получили. Больше двух сотен диалогов пролистали
+    // мимо, не узнав в них своих.
+    const byUsername = new Map<string, DialogCandidate>();
+    for (const candidate of candidates.values()) {
+      const nick = candidate.username?.trim().toLowerCase();
+      if (nick) byUsername.set(nick, candidate);
+    }
+
     for await (const { dialog, account } of this.eachDialog()) {
       dump.dialogsIterated += 1;
       if (dump.dialogs.length + dump.trivial.length >= limit) {
@@ -705,7 +701,7 @@ export class DialogsService {
       const entity = dialog.entity;
       if (!(entity instanceof Api.User)) continue;
 
-      const candidate = candidates.get(entity.id.toString());
+      const candidate = matchCandidate(candidates, byUsername, entity);
       if (!candidate) continue;
       if (seen.has(candidate.tgUserId)) continue;
       if (!this.ownsDialog(account, candidate.assignedAccount)) continue;
@@ -739,53 +735,6 @@ export class DialogsService {
           needReply: 0,
         },
     );
-
-    // ── Хвост: кандидаты, которых обход по диалогам не увидел ──
-    //
-    // Список диалогов у Telegram не полон, и это измеренный факт, а не
-    // предположение: 15.09.2026 обход стабильно терял около пятой части
-    // каждой пачки отправок — равномерно по всем дням, а не в один
-    // инцидент. Поэтому людям, которых список не отдал, мы стучимся
-    // напрямую: у нас есть их id, а сессия помнит, кому мы писали.
-    //
-    // Это дороже (запрос на человека), поэтому только для хвоста и с тем
-    // же джиттером, что и везде.
-    const missed = [...candidates.values()].filter((c) => !seen.has(c.tgUserId));
-    for (const candidate of missed.slice(0, UNSEEN_DEEP_MAX)) {
-      if (dump.dialogs.length + dump.trivial.length >= limit) break;
-
-      const account = this.accountFor(candidate.assignedAccount);
-      if (!account) continue;
-
-      let entity: Api.User;
-      try {
-        const resolved = await account.client.getEntity(bigInt(candidate.tgUserId));
-        if (!(resolved instanceof Api.User)) continue;
-        entity = resolved;
-      } catch (err) {
-        // Сессия про этого человека не помнит — resolve по нику стоил бы
-        // лимита на ResolveUsername, а его мы бережём для рассылки.
-        dump.unseenUnreachable += 1;
-        this.logger.warn(
-          `Хвост: id${candidate.tgUserId} не открылся: ${describeError(err)}`,
-        );
-        continue;
-      }
-
-      dump.unseenChecked += 1;
-      seen.add(candidate.tgUserId);
-
-      const entry = await this.inspectDialog(account, entity, candidate);
-      if (entry) {
-        countFor(account).seen += 1;
-        dump.dialogsSeen += 1;
-        if (entry.heuristic.action === 'clear') dump.trivial.push(entry);
-        else {
-          dump.dialogs.push(entry);
-          countFor(account).needReply += 1;
-        }
-      }
-    }
 
     dump.candidatesUnseen = dump.candidatesTotal - seen.size;
     for (const [id, c] of candidates) {
@@ -1296,6 +1245,25 @@ function resolveType(entity: Api.Chat | Api.Channel): DiscoveredChat['type'] {
  * считать курсор одинаково. Разъедутся — предпросмотр покажет одно, а
  * отправка сделает другое.
  */
+/**
+ * Кто перед нами: сначала по id, потом по @нику.
+ *
+ * Ник в Telegram уникален в каждый момент времени, поэтому совпадение по
+ * нему — не догадка. А вот id в нашей базе может быть от другого человека:
+ * см. комментарий к `byUsername` в collectUnanswered.
+ */
+function matchCandidate(
+  byId: Map<string, DialogCandidate>,
+  byUsername: Map<string, DialogCandidate>,
+  entity: Api.User,
+): DialogCandidate | null {
+  const direct = byId.get(entity.id.toString());
+  if (direct) return direct;
+
+  const nick = entity.username?.trim().toLowerCase();
+  return nick ? (byUsername.get(nick) ?? null) : null;
+}
+
 function cursorFloorSec(candidate: {
   contactedAt: Date | null;
   closedAt: Date | null;

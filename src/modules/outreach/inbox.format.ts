@@ -52,13 +52,6 @@ export interface InboxDump {
    */
   candidatesUnseen: number;
   /**
-   * Скольких из ненайденных удалось добрать напрямую по id, минуя список
-   * диалогов, и скольких не удалось. Список диалогов у Telegram неполон —
-   * это измерено, а не предположено, — и добор закрывает его дыру.
-   */
-  unseenChecked: number;
-  unseenUnreachable: number;
-  /**
    * Сколько диалогов аккаунта обход прошёл ВСЕГО — вместе с группами и
    * чужими людьми. Если это число меньше DIALOGS_LIMIT, окно ни при чём:
    * диалогов у аккаунта просто столько, и неосмотренных среди них нет.
@@ -209,11 +202,6 @@ export function formatInboxSummary(dump: InboxDump, path: string): string {
       ? [
           '',
           `⚠ НЕ НАЙДЕНО СРЕДИ ДИАЛОГОВ: ${dump.candidatesUnseen}. Обход прошёл ${dump.dialogsIterated} диалогов из ${totalDialogsLimit(dump)} возможных.`,
-          ...(dump.unseenChecked > 0 || dump.unseenUnreachable > 0
-            ? [
-                `  Из них добрано напрямую по id: ${dump.unseenChecked}, не открылось: ${dump.unseenUnreachable}.`,
-              ]
-            : []),
           ...(dump.dialogsIterated >= totalDialogsLimit(dump)
             ? ['  Обход упёрся в лимит — подними DIALOGS_LIMIT в .env и повтори.']
             : [

@@ -31,8 +31,6 @@ function dump(over: Partial<InboxDump> = {}): InboxDump {
     dialogsSeen: 412,
     candidatesTotal: 412,
     candidatesUnseen: 0,
-    unseenChecked: 0,
-    unseenUnreachable: 0,
     dialogsIterated: 500,
     dialogsLimit: 5000,
     accounts: [{ name: 'main', title: '@one', seen: 412, needReply: 1 }],
