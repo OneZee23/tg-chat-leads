@@ -84,7 +84,7 @@ describe('parseReviews', () => {
 
   it('ссылка берётся из отчёта — человек мог попросить канал вместо лички', () => {
     // По умолчанию в отчёте стоит t.me/<username>, но правится руками:
-    // @abosharova прямо попросила вести на её канал, а не в личку.
+    // @reviewer_a прямо попросила вести на её канал, а не в личку.
     const rows = parseReviews(
       FILE.replace('- ссылка: https://t.me/vera', '- ссылка: https://t.me/vera_channel'),
     );
@@ -189,5 +189,36 @@ describe('роль на карточке', () => {
 
   it('роль не утекает в цитату', () => {
     expect(parseReviews(FILE)[0].quote).not.toContain('корейского');
+  });
+});
+
+describe('ссылка в карточке', () => {
+  const base = (link: string) =>
+    [
+      '# Разрешение есть — 1',
+      '## id1 @nick',
+      `- ссылка: ${link}`,
+      '  2026-09-01 10:00',
+      '    Очень удобный сервис',
+      'PUBLISH',
+    ].join('\n');
+
+  it('личка в телеграме принимается', () => {
+    expect(parseReviews(base('https://t.me/nick'))[0].link).toBe('https://t.me/nick');
+  });
+
+  it('чужой сайт тоже: человек вправе попросить ссылку на свой профиль', () => {
+    // Живой случай: «ссылку на профи можно оставить, там аккаунт с отзывами,
+    // видно, что действительно репетитор». Проверка на t.me её выбрасывала.
+    const link = 'https://profi.ru/profile/IvannikovaDA3';
+    expect(parseReviews(base(link))[0].link).toBe(link);
+  });
+
+  it('заглушка из отчёта ссылкой не считается', () => {
+    expect(parseReviews(base('— (нет username, ссылки нет)'))[0].link).toBe('');
+  });
+
+  it('http без s не проходит: карточка публичная', () => {
+    expect(parseReviews(base('http://example.com'))[0].link).toBe('');
   });
 });

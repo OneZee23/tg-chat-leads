@@ -1,3 +1,4 @@
+import { clipKeepingLinks } from '@modules/outreach/clip';
 import type { WaitingDialog } from '@modules/dialogs/dialogs.service';
 
 /**
@@ -62,9 +63,8 @@ function row(r: WaitingDialog, index: number): string[] {
 }
 
 function oneLine(text: string): string {
-  const clean = (text ?? '').replace(/\s+/g, ' ').trim();
-  if (clean.length === 0) return '(без текста — вложение)';
-  return clean.length <= 120 ? clean : `${clean.slice(0, 120).trimEnd()}…`;
+  const clipped = clipKeepingLinks(text, 120);
+  return clipped.length === 0 ? '(без текста — вложение)' : clipped;
 }
 
 function date(at: Date): string {

@@ -1,3 +1,4 @@
+import { clipKeepingLinks } from '@modules/outreach/clip';
 import { CARD_QUOTE_LEN } from '@modules/dialogs/review-detect';
 import type { ConsentState, ReviewQuote } from '@modules/dialogs/review-detect';
 
@@ -60,7 +61,7 @@ function renderEntry(e: ReviewEntry): string {
     lines.push(`    мы:  ${e.consentAsk.replace(/\n+/g, ' ').slice(0, 200)}`);
     lines.push(
       e.consentAnswer
-        ? `    он: ${e.consentAnswer.replace(/\n+/g, ' ').slice(0, 200)}`
+        ? `    он: ${clipKeepingLinks(e.consentAnswer, 200)}`
         : '    он: (не ответил)',
     );
     lines.push('');
