@@ -239,3 +239,22 @@ describe('detectReview — согласие на публикацию', () => {
     });
   });
 });
+
+describe('длина цитаты', () => {
+  const long = (n: number) =>
+    'Отличная платформа, очень удобный интерфейс и расписание. ' + 'я'.repeat(n);
+
+  it('развёрнутый отзыв на 453 символа больше не выбрасывается', () => {
+    // Живой случай 15.09.2026: отсев стоял на 400 символах, ровно на длине
+    // карточки, и лучший отзыв недели не попал в выгрузку вовсе.
+    const text = long(400);
+    expect(text.length).toBeGreaterThan(400);
+    const found = detectReview([{ out: false, date: 1, message: text }]);
+    expect(found?.quotes).toHaveLength(1);
+  });
+
+  it('простыня на полторы тысячи символов всё ещё не отзыв', () => {
+    const found = detectReview([{ out: false, date: 1, message: long(1600) }]);
+    expect(found).toBeNull();
+  });
+});

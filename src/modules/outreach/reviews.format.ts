@@ -1,3 +1,4 @@
+import { CARD_QUOTE_LEN } from '@modules/dialogs/review-detect';
 import type { ConsentState, ReviewQuote } from '@modules/dialogs/review-detect';
 
 export interface ReviewEntry {
@@ -65,7 +66,14 @@ function renderEntry(e: ReviewEntry): string {
     lines.push('');
   }
   for (const q of e.quotes) {
-    lines.push(`  ${at(q.at)}`);
+    // Длинную цитату не отсекаем, а помечаем: на карточку она не влезет, но
+    // решает, что выкинуть, человек — сокращать чужие слова автоматически
+    // значит менять их смысл.
+    const long =
+      q.text.length > CARD_QUOTE_LEN
+        ? `  ${at(q.at)}   ← ${q.text.length} символов, для карточки подрежь до ${CARD_QUOTE_LEN}`
+        : `  ${at(q.at)}`;
+    lines.push(long);
     for (const l of q.text.split('\n')) lines.push(`    ${l}`);
     lines.push('');
   }
