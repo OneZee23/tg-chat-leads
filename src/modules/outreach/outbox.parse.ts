@@ -111,6 +111,37 @@ export function parseOutbox(raw: string): OutboxEntry[] {
   return entries;
 }
 
+/**
+ * Перенос по ширине внутри абзаца — самая частая порча текста, уходящего
+ * человеку.
+ *
+ * Привычка переносить на 76–80 символов приходит из кода, а здесь она
+ * вредна: Telegram переносит сам по ширине экрана собеседника, наши `\n`
+ * он рисует как есть, и сообщение выглядит рваным — ровно там, где мы
+ * старались выглядеть письмом живого человека, а не рассылкой. Владелец
+ * ловил это дважды, поэтому проверка машинная, а не «надо помнить».
+ *
+ * Абзац — это строки между пустыми. Две непустые строки подряд считаются
+ * переносом, если вторая не похожа на пункт списка: список — законный
+ * многострочник, и ломать его нельзя.
+ *
+ * Возвращает начало испорченного абзаца или null, если всё в порядке.
+ */
+export function findHardWrap(body: string): string | null {
+  for (const paragraph of body.split(/\n\s*\n/)) {
+    const lines = paragraph.split('\n').filter((line) => line.trim().length > 0);
+    for (let i = 0; i + 1 < lines.length; i += 1) {
+      if (!isListItem(lines[i + 1])) return lines[i].trim().slice(0, 48);
+    }
+  }
+  return null;
+}
+
+/** «- раз», «1) два», «• три», «— четыре» — то, что переносом не является. */
+function isListItem(line: string): boolean {
+  return /^\s*([-*•—–]|\d{1,2}[).]|[a-zа-яё][).])\s+/i.test(line);
+}
+
 function toEntry(record: RawRecord): OutboxEntry {
   const firstMeaningful = record.lines.findIndex((l) => l.trim().length > 0);
   if (firstMeaningful === -1) {
@@ -144,6 +175,16 @@ function toEntry(record: RawRecord): OutboxEntry {
   if (goesToTelegram && body.length > MAX_REPLY_LEN) {
     throw new OutboxParseError(
       `id${record.tgUserId}: текст ${body.length} символов, лимит ${MAX_REPLY_LEN}.`,
+    );
+  }
+
+  const wrapped = goesToTelegram ? findHardWrap(body) : null;
+  if (wrapped) {
+    throw new OutboxParseError(
+      `id${record.tgUserId}: перенос строки внутри абзаца — «${wrapped}…». ` +
+        'Telegram переносит текст сам по ширине экрана, а наши \n показывает ' +
+        'как есть, и предложение рвётся на середине. Собери абзац в одну ' +
+        'строку любой длины, между абзацами оставь пустую.',
     );
   }
 
