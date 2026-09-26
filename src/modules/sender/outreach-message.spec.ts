@@ -1,8 +1,10 @@
 import {
+  DEFAULT_BODY,
   buildHook,
   buildOutreachMessage,
   detectSubject,
 } from '@modules/sender/outreach-message';
+import { SITE_LINK } from '@common/site-link';
 
 describe('detectSubject', () => {
   it('достаёт предмет из реального объявления', () => {
@@ -68,5 +70,13 @@ describe('buildOutreachMessage', () => {
 
     // Проверяем, что не превратилось в простыню на пол-экрана.
     expect(message.length).toBeLessThan(900);
+  });
+});
+
+describe('ссылка в теле по умолчанию', () => {
+  it('размечена меткой канала', () => {
+    // Без метки регистрация из аутрича придёт с пустым signup_source и
+    // канал будет выглядеть мёртвым.
+    expect(DEFAULT_BODY).toContain(SITE_LINK);
   });
 });

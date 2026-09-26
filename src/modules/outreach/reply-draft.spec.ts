@@ -1,3 +1,4 @@
+import { SITE_LINK } from '@common/site-link';
 import {
   autoReplyDecision,
   autoReplyTemplate,
@@ -109,6 +110,17 @@ describe('suggestReply', () => {
     expect(s.kind).toBe('decline');
     expect(s.draft).toContain('Удачи');
     expect(s.hint).toContain('skip');
+  });
+
+  it('во всех черновиках ссылка размечена меткой канала', () => {
+    // Человек может зайти не по первому сообщению, а по ссылке из ответа.
+    // Без метки такая регистрация припишется «никуда» и канал занизится.
+    for (const text of ['Хочу попробовать', 'Здравствуйте', 'Спасибо, не интересует']) {
+      const draft = suggestReply(text).draft;
+      if (draft && draft.includes('teachtrack.ru')) {
+        expect(draft).toContain(SITE_LINK);
+      }
+    }
   });
 
   it('на нейтральное — лёгкое касание со ссылкой, без канцелярита', () => {
