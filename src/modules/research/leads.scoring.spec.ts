@@ -68,7 +68,7 @@ describe('detectSignals', () => {
     expect(detectSignals('кто может зарефералить в свою компанию?')).toContain('seeker');
   });
 
-  it('работает и на английском - в @англоязычного чата русских фраз нет', () => {
+  it('работает и на английском - в англоязычном чате русских фраз нет', () => {
     expect(detectSignals('we are hiring a backend engineer')).toContain('hiring');
     expect(detectSignals('happy to refer you, send me your CV')).toContain('referral');
     expect(detectSignals('I work at Ledger on the wallet team')).toContain('insider');

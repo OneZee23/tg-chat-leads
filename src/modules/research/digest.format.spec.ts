@@ -12,7 +12,7 @@ const AT = Math.floor(new Date('2026-07-31T12:00:00Z').getTime() / 1000);
 function hit(over: Partial<ResearchHit> = {}): ResearchHit {
   return {
     chatRef: '@some_channel',
-    chatTitle: 'Карта шансов',
+    chatTitle: 'Пример чата',
     messageId: 42,
     date: AT,
     author: '@vlad',
